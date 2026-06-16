@@ -136,7 +136,11 @@ export class InkFrontend implements Frontend {
         ) +
         '\n',
     );
-    const instance = render(React.createElement(App, { controller: this.controller }));
+    // exitOnCtrlC: false — Ink would otherwise quit on the first Ctrl+C before our
+    // confirm/interrupt handler in App runs. We handle Ctrl+C ourselves in useInput.
+    const instance = render(React.createElement(App, { controller: this.controller }), {
+      exitOnCtrlC: false,
+    });
     await instance.waitUntilExit();
     process.stdout.write(`\n${c.dim('Resume this session:')} thinkco --resume ${this.runtime.session.id}\n`);
   }
