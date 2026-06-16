@@ -854,6 +854,7 @@ export class AgentRuntime {
         memory,
         skillsCatalog: this.skills.catalog() || undefined,
         toolNames: this.opts.tools.list().map((t) => t.name),
+        commands: this.commands.list().map((c) => ({ name: c.name, description: c.description })),
       });
     const system = [base, this.agentProfilePrompt(), this.sessionContextBlock()].filter(Boolean).join('\n\n');
     return new AgentLoop({

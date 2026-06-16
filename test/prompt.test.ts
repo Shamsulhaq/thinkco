@@ -24,4 +24,20 @@ describe('buildSystemPrompt', () => {
     const p = buildSystemPrompt({ cwd: process.cwd(), remote: true });
     expect(p).toMatch(/Remote session/);
   });
+
+  it('injects the real command list and an anti-hallucination identity rule', () => {
+    const p = buildSystemPrompt({
+      cwd: process.cwd(),
+      commands: [
+        { name: 'help', description: 'Show help' },
+        { name: 'compose', description: 'Specs-driven orchestration' },
+      ],
+    });
+    expect(p).toContain('# Commands');
+    expect(p).toContain('/help — Show help');
+    expect(p).toContain('/compose — Specs-driven orchestration');
+    // Identity guard so the model stops inventing other tools' commands.
+    expect(p).toMatch(/You are \*\*thinkco\*\*/);
+    expect(p).toMatch(/NEVER make up commands/);
+  });
 });

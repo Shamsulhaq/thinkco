@@ -7,14 +7,31 @@ import { type TuiController, type TuiItem, filterOverlay } from './controller.js
 function ItemView({ item }: { item: TuiItem }): React.ReactElement {
   if (item.kind === 'user') {
     return (
-      <Box>
-        <Text color="cyan">› </Text>
+      <Box marginTop={1}>
+        <Text color="cyan" bold>
+          {'❯ '}
+        </Text>
+        <Text bold>{item.text}</Text>
+      </Box>
+    );
+  }
+  if (item.kind === 'assistant') {
+    return (
+      <Box marginTop={1}>
+        <Text color="magenta">{'✦ '}</Text>
         <Text>{item.text}</Text>
       </Box>
     );
   }
   if (item.kind === 'tool') {
-    return <Text color="green">⏺ {item.text}</Text>;
+    return (
+      <Text>
+        <Text color="green">{'⏺ '}</Text>
+        <Text color="green" bold>
+          {item.text}
+        </Text>
+      </Text>
+    );
   }
   if (item.kind === 'result') {
     return (
@@ -139,7 +156,12 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
     <Box flexDirection="column">
       <Static items={snap.items}>{(item) => <ItemView key={item.id} item={item} />}</Static>
 
-      {snap.stream ? <Text>{snap.stream}</Text> : null}
+      {snap.stream ? (
+        <Box marginTop={1}>
+          <Text color="magenta">{'✦ '}</Text>
+          <Text>{snap.stream}</Text>
+        </Box>
+      ) : null}
 
       {snap.items.length === 0 && !snap.stream && !snap.busy ? (
         <Text dimColor>Ask me to build, fix, or explain something — I&apos;ll use tools to do it.</Text>
@@ -269,23 +291,35 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
         </Box>
       ) : null}
 
-      {/* Persistent input. */}
+      {/* Persistent input — modern bordered box with a context hint line. */}
       {!snap.approval && !snap.select && !snap.overlay && !snap.inputReq ? (
-        <Box>
-          <Text color="cyan">❯ </Text>
-          <TextInput
-            key={inputKey}
-            value={input}
-            onChange={(v: string) => setInput(sanitizeTypedInput(v))}
-            onSubmit={(v: string) => {
-              // If a command suggestion is highlighted and no args were typed yet, run the
-              // selected suggestion (so ↑/↓ then Enter runs that command, not the raw prefix).
-              const target = resolveSubmitTarget(v, controller.commands, palIndex);
-              setInput('');
-              if (!controller.tryOpenOverlay(target)) controller.submit(target);
-            }}
-            placeholder={snap.busy ? 'working… (Ctrl+C to interrupt)' : 'type a message or /command'}
-          />
+        <Box flexDirection="column" marginTop={1}>
+          <Box borderStyle="round" borderColor={snap.busy ? 'yellow' : 'cyan'} paddingX={1}>
+            <Text color={snap.busy ? 'yellow' : 'cyan'} bold>
+              {snap.busy ? `${spinnerDot()} ` : '❯ '}
+            </Text>
+            <TextInput
+              key={inputKey}
+              value={input}
+              onChange={(v: string) => setInput(sanitizeTypedInput(v))}
+              onSubmit={(v: string) => {
+                // If a command suggestion is highlighted and no args were typed yet, run the
+                // selected suggestion (so ↑/↓ then Enter runs that command, not the raw prefix).
+                const target = resolveSubmitTarget(v, controller.commands, palIndex);
+                setInput('');
+                if (!controller.tryOpenOverlay(target)) controller.submit(target);
+              }}
+              placeholder={snap.busy ? 'working… (Ctrl+C to interrupt)' : 'type a message or /command'}
+            />
+          </Box>
+          <Box paddingX={1}>
+            <Text dimColor>
+              {snap.status.provider} · {snap.status.model} · {snap.status.mode}
+              {'   '}
+              <Text color="cyan">Tab</Text> agent · <Text color="cyan">⇧Tab</Text> mode ·{' '}
+              <Text color="cyan">/help</Text> · <Text color="cyan">Ctrl+C ×2</Text> quit
+            </Text>
+          </Box>
         </Box>
       ) : null}
     </Box>
