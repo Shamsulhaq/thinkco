@@ -13,6 +13,7 @@ import type { ApprovalRequest, Frontend } from './types.js';
 import { type ApprovalPrompt } from '../permissions/index.js';
 import { AgentRuntime } from '../agent/runtime.js';
 import { c, box } from '../ui/ansi.js';
+import { thinkcoLogo } from '../ui/banner.js';
 import { MarkdownStream } from '../ui/markdown.js';
 import { Spinner } from '../ui/spinner.js';
 import { promptSelect } from '../ui/select.js';
@@ -212,9 +213,11 @@ export class CliFrontend implements Frontend {
     this.activeRl = rl;
     process.stdout.write(
       '\n' +
+        thinkcoLogo() +
+        '\n' +
         box(
           [
-            `${c.magenta('✻')} ${c.bold('thinkco')} ${c.dim('v' + VERSION)}   ${c.dim('multi-provider coding agent')}`,
+            `${c.dim('v' + VERSION)}   ${c.dim('multi-provider coding agent')}`,
             '',
             `${c.dim('provider')}  ${c.cyan(this.runtime.state.provider)}`,
             `${c.dim('model')}     ${c.cyan(this.runtime.state.model)}`,

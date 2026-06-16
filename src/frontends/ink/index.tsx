@@ -119,12 +119,15 @@ export class InkFrontend implements Frontend {
 
   async start(): Promise<void> {
     const { box, c } = await import('../../ui/ansi.js');
+    const { thinkcoLogo } = await import('../../ui/banner.js');
     const { VERSION } = await import('../../index.js');
     process.stdout.write(
       '\n' +
+        thinkcoLogo() +
+        '\n' +
         box(
           [
-            `${c.magenta('✻')} ${c.bold('thinkco')} ${c.dim('v' + VERSION)}   ${c.dim('multi-provider coding agent')}`,
+            `${c.dim('v' + VERSION)}   ${c.dim('multi-provider coding agent')}`,
             '',
             `${c.dim('provider')}  ${c.cyan(this.runtime.state.provider)}`,
             `${c.dim('model')}     ${c.cyan(this.runtime.state.model)}`,
