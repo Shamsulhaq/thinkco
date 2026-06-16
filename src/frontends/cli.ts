@@ -12,8 +12,8 @@ import type { Config } from '../config/index.js';
 import type { ApprovalRequest, Frontend } from './types.js';
 import { type ApprovalPrompt } from '../permissions/index.js';
 import { AgentRuntime } from '../agent/runtime.js';
-import { c, box } from '../ui/ansi.js';
-import { thinkcoLogo } from '../ui/banner.js';
+import { c, box, sideBySide, visibleLength } from '../ui/ansi.js';
+import { thinkcoLogo, LOGO_WIDTH } from '../ui/banner.js';
 import { MarkdownStream } from '../ui/markdown.js';
 import { Spinner } from '../ui/spinner.js';
 import { promptSelect } from '../ui/select.js';
@@ -211,25 +211,24 @@ export class CliFrontend implements Frontend {
     };
     const rl: Interface = createInterface({ input: process.stdin, output: process.stdout, completer });
     this.activeRl = rl;
-    process.stdout.write(
-      '\n' +
-        thinkcoLogo() +
-        '\n' +
-        box(
-          [
-            `${c.dim('v' + VERSION)}   ${c.dim('multi-provider coding agent')}`,
-            '',
-            `${c.dim('provider')}  ${c.cyan(this.runtime.state.provider)}`,
-            `${c.dim('model')}     ${c.cyan(this.runtime.state.model)}`,
-            `${c.dim('mode')}      ${c.cyan(this.runtime.getMode())} ${c.dim('(Shift+Tab to cycle)')}`,
-            `${c.dim('cwd')}       ${process.cwd()}`,
-            '',
-            c.dim('/help · /models · /mode · /provider · /usage · /exit'),
-          ],
-          { color: c.gray, padding: 2 },
-        ) +
-        '\n',
+    const logo = thinkcoLogo();
+    const infoBox = box(
+      [
+        `${c.dim('v' + VERSION)}   ${c.dim('multi-provider coding agent')}`,
+        '',
+        `${c.dim('provider')}  ${c.cyan(this.runtime.state.provider)}`,
+        `${c.dim('model')}     ${c.cyan(this.runtime.state.model)}`,
+        `${c.dim('mode')}      ${c.cyan(this.runtime.getMode())} ${c.dim('(Shift+Tab to cycle)')}`,
+        `${c.dim('cwd')}       ${process.cwd()}`,
+        '',
+        c.dim('/help · /models · /mode · /provider · /usage · /exit'),
+      ],
+      { color: c.gray, padding: 2 },
     );
+    const cols = process.stdout.columns ?? 80;
+    const boxW = visibleLength(infoBox.split('\n')[0] ?? '');
+    const header = cols >= LOGO_WIDTH + 3 + boxW ? sideBySide(logo, infoBox) : `${logo}\n${infoBox}`;
+    process.stdout.write('\n' + header + '\n');
 
     let controller: AbortController | null = null;
     let closed = false;

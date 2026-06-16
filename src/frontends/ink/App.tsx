@@ -312,14 +312,6 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
               placeholder={snap.busy ? 'working… (Ctrl+C to interrupt)' : 'type a message or /command'}
             />
           </Box>
-          <Box paddingX={1}>
-            <Text dimColor>
-              {snap.status.provider} · {snap.status.model} · {snap.status.mode}
-              {'   '}
-              <Text color="cyan">Tab</Text> agent · <Text color="cyan">⇧Tab</Text> mode ·{' '}
-              <Text color="cyan">/help</Text> · <Text color="cyan">Ctrl+C ×2</Text> quit
-            </Text>
-          </Box>
         </Box>
       ) : null}
     </Box>

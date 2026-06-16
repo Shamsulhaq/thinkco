@@ -29,6 +29,27 @@ export function visibleLength(s: string): number {
   return s.replace(/\x1b\[[0-9;]*m/g, '').length;
 }
 
+/** Place two multi-line blocks next to each other, vertically centering the shorter one. */
+export function sideBySide(left: string, right: string, gap = 3): string {
+  const l = left.split('\n');
+  const r = right.split('\n');
+  const lw = Math.max(...l.map(visibleLength));
+  const rows = Math.max(l.length, r.length);
+  const lOff = Math.floor((rows - l.length) / 2);
+  const rOff = Math.floor((rows - r.length) / 2);
+  const spacer = ' '.repeat(gap);
+  const out: string[] = [];
+  for (let i = 0; i < rows; i++) {
+    const li = i - lOff;
+    const ri = i - rOff;
+    const ltext = li >= 0 && li < l.length ? l[li]! : '';
+    const rtext = ri >= 0 && ri < r.length ? r[ri]! : '';
+    const pad = ' '.repeat(Math.max(0, lw - visibleLength(ltext)));
+    out.push(ltext + pad + spacer + rtext);
+  }
+  return out.join('\n');
+}
+
 export const CLEAR_LINE = '\r\x1b[2K';
 
 /** Draw a rounded box around the given (plain) lines. */

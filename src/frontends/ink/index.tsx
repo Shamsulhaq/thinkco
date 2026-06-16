@@ -118,28 +118,28 @@ export class InkFrontend implements Frontend {
   }
 
   async start(): Promise<void> {
-    const { box, c } = await import('../../ui/ansi.js');
-    const { thinkcoLogo } = await import('../../ui/banner.js');
+    const { box, c, sideBySide, visibleLength } = await import('../../ui/ansi.js');
+    const { thinkcoLogo, LOGO_WIDTH } = await import('../../ui/banner.js');
     const { VERSION } = await import('../../index.js');
-    process.stdout.write(
-      '\n' +
-        thinkcoLogo() +
-        '\n' +
-        box(
-          [
-            `${c.dim('v' + VERSION)}   ${c.dim('multi-provider coding agent')}`,
-            '',
-            `${c.dim('provider')}  ${c.cyan(this.runtime.state.provider)}`,
-            `${c.dim('model')}     ${c.cyan(this.runtime.state.model)}`,
-            `${c.dim('mode')}      ${c.cyan(this.runtime.getMode())} ${c.dim('(Shift+Tab to cycle)')}`,
-            `${c.dim('cwd')}       ${process.cwd()}`,
-            '',
-            c.dim('Type a request · /help for commands · /models to switch · /exit to quit'),
-          ],
-          { color: c.gray, padding: 2 },
-        ) +
-        '\n',
+    const logo = thinkcoLogo();
+    const infoBox = box(
+      [
+        `${c.dim('v' + VERSION)}   ${c.dim('multi-provider coding agent')}`,
+        '',
+        `${c.dim('provider')}  ${c.cyan(this.runtime.state.provider)}`,
+        `${c.dim('model')}     ${c.cyan(this.runtime.state.model)}`,
+        `${c.dim('mode')}      ${c.cyan(this.runtime.getMode())} ${c.dim('(Shift+Tab to cycle)')}`,
+        `${c.dim('cwd')}       ${process.cwd()}`,
+        '',
+        c.dim('Type a request · /help for commands · /models to switch · /exit to quit'),
+      ],
+      { color: c.gray, padding: 2 },
     );
+    const cols = process.stdout.columns ?? 80;
+    const boxW = visibleLength(infoBox.split('\n')[0] ?? '');
+    const header =
+      cols >= LOGO_WIDTH + 3 + boxW ? sideBySide(logo, infoBox) : `${logo}\n${infoBox}`;
+    process.stdout.write('\n' + header + '\n');
     // Disable terminal "focus reporting" (DECSET 1004). When it's on (often left enabled by a
     // previous program, tmux, or the terminal config), switching/minimizing the window emits
     // ESC[I / ESC[O sequences that leak into the input box as "[I"/"[O". We don't use focus
