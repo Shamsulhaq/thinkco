@@ -16,3 +16,13 @@ coverage/
 *.rvf.lock
 remote.txt
 <file-path>
+
+# editor / OS / build caches
+.vscode/
+.idea/
+*.tsbuildinfo
+*.tgz
+thinkco-*.tgz
+
+# dev-only UI screenshots (kept locally, not shipped)
+samples/
