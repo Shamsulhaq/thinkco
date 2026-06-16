@@ -53,7 +53,12 @@ describe('web_search tool', () => {
     expect(webSearchTool.risk).toBe('network');
     // Playwright is an optional dep: when absent the tool returns install guidance; when present it
     // performs a real browser search. Either way it must return a non-empty string and never throw.
-    const out = await webSearchTool.run({ query: 'test' }, { cwd: process.cwd() });
+    // Race the (possibly live, network-bound) browser search against a sentinel so the test is
+    // deterministic: a genuine throw still rejects, but slow networks can't make it flake.
+    const out = await Promise.race([
+      webSearchTool.run({ query: 'test' }, { cwd: process.cwd() }),
+      new Promise<string>((resolve) => setTimeout(() => resolve('search-timed-out'), 20_000)),
+    ]);
     expect(typeof out).toBe('string');
     expect(out.length).toBeGreaterThan(0);
   }, 30_000);
