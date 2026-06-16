@@ -68,6 +68,11 @@ describe('TuiController', () => {
     expect(c.getSnapshot().status.mode).toBe('plan');
   });
 
+  it('notify adds a notice item to scrollback', () => {
+    const c = makeController();
+    c.notify('Press Ctrl+C again to exit');
+    expect(c.getSnapshot().items.some((i) => i.kind === 'notice' && /Ctrl\+C/.test(i.text))).toBe(true);
+  });
   it('requestExit sets the exiting flag', () => {
     const c = makeController();
     expect(c.getSnapshot().exiting).toBe(false);

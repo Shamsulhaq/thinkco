@@ -19,6 +19,7 @@ export interface InkFrontendOptions {
   tools: ToolRegistry;
   sessionStore: SessionStore;
   resume?: boolean;
+  resumeId?: string;
   auditPath?: string;
   availableModels?: string[];
   cwd?: string;
@@ -46,6 +47,7 @@ export class InkFrontend implements Frontend {
       sessionStore: opts.sessionStore,
       ui,
       resume: opts.resume,
+      resumeId: opts.resumeId,
       auditPath: opts.auditPath,
       availableModels: opts.availableModels,
       origin: 'ink',
@@ -136,5 +138,6 @@ export class InkFrontend implements Frontend {
     );
     const instance = render(React.createElement(App, { controller: this.controller }));
     await instance.waitUntilExit();
+    process.stdout.write(`\n${c.dim('Resume this session:')} thinkco --resume ${this.runtime.session.id}\n`);
   }
 }

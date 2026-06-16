@@ -64,7 +64,7 @@ thinkco --provider <name>         anthropic | openai | gemini | ollama | lmstudi
 thinkco --model <id>              Model id
 thinkco --permission-mode <m>     default|acceptEdits|plan|dontAsk|auto|bypass
 thinkco --classic                 Classic readline REPL
-thinkco --resume                  Resume the most recent session
+thinkco --resume [id]             Resume the latest session (or a specific one by id)
 thinkco -v | --version            Print version
 thinkco -h | --help               Help
 
@@ -97,7 +97,7 @@ thinkco schedule                  Run configured scheduled tasks in the foregrou
 | `/init` `/doctor` `/config` `/trust` `/rename` | Project init / health check / show config / trust dir / rename session |
 | `/exit` | Quit |
 
-**Keys (TUI):** `Tab` cycles agents (or autocompletes the highlighted `/command`), `Shift+Tab` cycles permission modes, `↑/↓` navigate suggestions/menus, `Esc` closes overlays, `Ctrl+C` interrupts/quits.
+**Keys (TUI):** `Tab` cycles agents (or autocompletes the highlighted `/command`), `Shift+Tab` cycles permission modes, `↑/↓` navigate, `Esc` closes overlays. **`Ctrl+C`** interrupts a running task; press it **again (within 3s)** — or run `/exit` — to quit. On exit, thinkco prints `thinkco --resume <id>` so you can pick the session back up.
 
 ## 6. Tools (the agent calls these for you)
 

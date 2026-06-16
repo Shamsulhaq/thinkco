@@ -40,6 +40,7 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
   const [reqValue, setReqValue] = React.useState('');
   const [palIndex, setPalIndex] = React.useState(0);
   const [inputKey, setInputKey] = React.useState(0);
+  const [exitArmed, setExitArmed] = React.useState(0);
   const [, setTick] = React.useState(0);
 
   // Reset the highlighted suggestion whenever the typed input changes.
@@ -65,8 +66,19 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
       return;
     }
     if (key.ctrl && ch === 'c') {
-      if (snap.busy) controller.interrupt();
-      else exit();
+      const now = Date.now();
+      if (snap.busy) {
+        controller.interrupt();
+        setExitArmed(now);
+        controller.notify('Interrupted. Press Ctrl+C again to exit.');
+        return;
+      }
+      if (now - exitArmed < 3000) {
+        exit();
+        return;
+      }
+      setExitArmed(now);
+      controller.notify('Press Ctrl+C again to exit (or /exit).');
       return;
     }
     if (snap.overlay) {

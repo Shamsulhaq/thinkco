@@ -145,6 +145,11 @@ export class TuiController {
     this.onInterrupt?.();
   }
 
+  /** Show a transient notice line in the scrollback. */
+  notify(text: string): void {
+    this.addItem('notice', text);
+  }
+
   /** Signal the app to exit (e.g. after /exit). */
   requestExit(): void {
     this.set({ exiting: true });

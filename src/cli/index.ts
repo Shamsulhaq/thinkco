@@ -22,7 +22,7 @@ OPTIONS
   --model <name>         Model id to use
   --permission-mode <m>  default | acceptEdits | plan | dontAsk | auto | bypass
   --classic              Use the classic readline REPL instead of the TUI
-  --resume               Resume the most recent session
+  --resume [id]          Resume the latest session, or a specific one by id
   --yes                  Headless: auto-approve actions
   --json                 Emit machine-readable JSON output (headless)
   --log-level <level>    debug | info | warn | error | silent
@@ -199,6 +199,7 @@ export async function main(argv: string[]): Promise<number> {
     tools,
     sessionStore,
     resume: args.flags.has('resume'),
+    resumeId: args.flags.has('resume') ? args.positionals[0] : undefined,
     auditPath: join(process.cwd(), '.thinkco', 'audit.log'),
     availableModels,
   };

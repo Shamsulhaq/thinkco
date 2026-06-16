@@ -9,7 +9,7 @@ import { memoryTool } from '../src/tools/core/memory.js';
 import { AgentRuntime } from '../src/agent/runtime.js';
 import { ProviderRegistry } from '../src/providers/registry.js';
 import { ToolRegistry } from '../src/tools/registry.js';
-import { SessionStore } from '../src/agent/session.js';
+import { SessionStore, newSession } from '../src/agent/session.js';
 import { loadConfig } from '../src/config/index.js';
 import { RecordingSink } from '../src/agent/output.js';
 import type { Tool } from '../src/tools/types.js';
@@ -175,5 +175,27 @@ describe('compose orchestration', () => {
     }
     expect(notices).toMatch(/Compose lifecycle complete/);
     expect(rt.agent).toBe('compose');
+  });
+});
+
+describe('session resume by id', () => {
+  it('resumes a specific session via resumeId', () => {
+    const store = new SessionStore(join(dir, 'sessions'));
+    const sess = newSession('fake', 'fake-1');
+    sess.messages.push({ role: 'user', content: [{ type: 'text', text: 'earlier message' }] });
+    store.save(sess);
+    const config = loadConfig({ globalDir: dir, projectDir: dir, overrides: { defaultProvider: 'fake' } });
+    const rt = new AgentRuntime({
+      config,
+      providerRegistry: new ProviderRegistry(),
+      tools: new ToolRegistry(),
+      sessionStore: store,
+      ui: { approve: async () => true, select: async () => null },
+      cwd: dir,
+      globalConfigDir: dir,
+      resumeId: sess.id,
+    });
+    expect(rt.session.id).toBe(sess.id);
+    expect(rt.loop.messages.length).toBeGreaterThan(0);
   });
 });

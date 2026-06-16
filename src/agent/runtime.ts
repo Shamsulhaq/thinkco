@@ -45,6 +45,8 @@ export interface AgentRuntimeOptions {
   ui: RuntimeUI;
   system?: string;
   resume?: boolean;
+  /** Resume a specific session by id (overrides `resume`). */
+  resumeId?: string;
   approve?: ApprovalHook;
   auditPath?: string;
   availableModels?: string[];
@@ -186,7 +188,11 @@ export class AgentRuntime {
       },
     });
 
-    const resumed = opts.resume ? opts.sessionStore.latest() : undefined;
+    const resumed = opts.resumeId
+      ? opts.sessionStore.load(opts.resumeId)
+      : opts.resume
+        ? opts.sessionStore.latest()
+        : undefined;
     this.session = resumed ?? newSession(provider, model);
     this.loopInstance = this.buildLoop();
     if (resumed) this.loopInstance.setMessages(resumed.messages);

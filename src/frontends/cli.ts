@@ -102,6 +102,7 @@ export interface CliFrontendOptions {
   sessionStore: SessionStore;
   system?: string;
   resume?: boolean;
+  resumeId?: string;
   approve?: ApprovalHook;
   auditPath?: string;
   availableModels?: string[];
@@ -127,6 +128,7 @@ export class CliFrontend implements Frontend {
       ui,
       system: opts.system,
       resume: opts.resume,
+      resumeId: opts.resumeId,
       approve: opts.approve,
       auditPath: opts.auditPath,
       availableModels: opts.availableModels,
