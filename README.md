@@ -87,7 +87,7 @@ Run scheduled tasks in the foreground with `thinkco schedule` (Ctrl-C to stop).
 `/usage` `/trust` `/init` `/doctor` `/config` `/rename` `/agent` `/goal` `/compose` `/agents` `/budget` `/fallback` `/undo` `/exit`
 
 **Primary agents** (switch with **Tab** or `/agent`): **build** (full tools), **plan** (read-only
-analysis), **compose** (specs-driven orchestration: plan→implement→review→test→verify). `/goal
+analysis), **compose** (specs-driven orchestration: plan→docs→implement→review→test→verify→readme). `/goal
 <condition>` sets a stop condition an independent judge model verifies before the agent stops;
 `/compose <spec>` drives the spec-to-shipped lifecycle; `/agents` lists/cancels sub-agents.
 

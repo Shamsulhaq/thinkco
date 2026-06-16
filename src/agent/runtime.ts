@@ -1103,6 +1103,7 @@ export class AgentRuntime {
   private async runCompose(spec: string, sink: AgentSink, signal?: AbortSignal): Promise<void> {
     const phases: Array<[string, string]> = [
       ['plan', `Restate the spec and assumptions, then create a task tree with the \`task\` tool (subtasks under a top task). Spec:\n${spec}`],
+      ['docs', 'Write a `PRD.md` (Product Requirements Document) at the project root capturing the goals, scope, user stories/requirements, constraints, and acceptance criteria derived from the spec. If the work warrants it, also create supporting design docs (e.g. `ARCHITECTURE.md` or `DESIGN.md`). Use the write/edit tools.'],
       ['implement', 'Implement the planned tasks. Use the file/edit/shell tools; mark each task in_progress then done with the `task` tool as you complete it. Delegate self-contained chunks with the `subagent` tool when helpful.'],
       ['review', 'Critically review the changes so far for correctness, security, and clarity. Fix any issues you find.'],
       ['test', 'Add or update tests that meaningfully verify the new behavior, then run them.'],
@@ -1133,7 +1134,23 @@ export class AgentRuntime {
       await this.checkpointAndReconstruct();
     }
     await this.runVerifyGate(sink, signal);
-    await sink.notice('✓ Compose lifecycle complete (plan → implement → review → test → verify).');
+    // Final documentation pass: bring README.md in line with what actually shipped.
+    if (!signal?.aborted) {
+      await sink.notice('▶ Compose phase: readme');
+      await this.runTurnWithFailover(
+        '[COMPOSE · README phase] Create or update `README.md` so it accurately documents what shipped: ' +
+          'a short overview, key features, install/setup steps, usage/examples, and configuration. ' +
+          'Keep it consistent with the actual code and with PRD.md. Use the write/edit tools.',
+        sink,
+        signal,
+      );
+      if (this.loopInstance.lastError) {
+        await sink.error(`✗ Compose README phase failed: ${this.loopInstance.lastError}`);
+        return;
+      }
+      await this.checkpointAndReconstruct();
+    }
+    await sink.notice('✓ Compose lifecycle complete (plan → docs → implement → review → test → verify → readme).');
   }
 
   /** Commands the compose verify phase runs (config.verify, else auto-detected npm build/test). */

@@ -83,7 +83,7 @@ thinkco schedule                  Run configured scheduled tasks in the foregrou
 | `/mode [name]` | Permission mode (or **Shift+Tab** to cycle) |
 | `/agent [build\|plan\|compose]` | Switch primary agent (or **Tab** to cycle) |
 | `/goal <condition>` | Set a stop condition verified by a judge model (`/goal clear`) |
-| `/compose <spec>` | Specs-driven orchestration: plan→implement→review→test→verify |
+| `/compose <spec>` | Specs-driven orchestration: plan→docs→implement→review→test→verify→readme |
 | `/agents` | List sub-agents · `/agents cancel <id>` · `/agents result <id>` |
 | `/budget <usd>` | Per-session cost cap (`off` to clear) |
 | `/fallback ...` | Show/set the provider failover chain: `/fallback openai:gpt-4o, anthropic` · `/fallback off` |
