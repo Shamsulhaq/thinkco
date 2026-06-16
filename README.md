@@ -5,6 +5,7 @@ remote-capable. Think "Claude Code, but it works across Anthropic, OpenAI, Gemin
 models (Ollama)."
 
 See `AGENT.md` for architecture and `WORKPLAN.md` for the phased roadmap.
+New here? Read the **[User Guide](docs/USER-GUIDE.md)** (install, commands, tools, skills, plugins, MCP, Telegram).
 
 ## Install
 
