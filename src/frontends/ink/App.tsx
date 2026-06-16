@@ -199,7 +199,7 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
             <Text color="cyan">❯ </Text>
             <TextInput
               value={reqValue}
-              onChange={setReqValue}
+              onChange={(v: string) => setReqValue(sanitizeTypedInput(v))}
               mask={snap.inputReq.password ? '*' : undefined}
               onSubmit={(v: string) => {
                 setReqValue('');
@@ -276,7 +276,7 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
           <TextInput
             key={inputKey}
             value={input}
-            onChange={setInput}
+            onChange={(v: string) => setInput(sanitizeTypedInput(v))}
             onSubmit={(v: string) => {
               // If a command suggestion is highlighted and no args were typed yet, run the
               // selected suggestion (so ↑/↓ then Enter runs that command, not the raw prefix).
@@ -297,6 +297,20 @@ const DOTS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '�
 function spinnerDot(): string {
   dotFrame = (dotFrame + 1) % DOTS.length;
   return DOTS[dotFrame]!;
+}
+
+/**
+ * Strip terminal control/escape noise so it never lands in the input box. Some terminals emit
+ * focus-event sequences (ESC[I on focus-in, ESC[O on focus-out) when you switch or minimize the
+ * window; the ESC is consumed and the literal "[I"/"[O" would otherwise be typed into the input.
+ */
+export function sanitizeTypedInput(value: string): string {
+  /* eslint-disable no-control-regex */
+  return value
+    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '') // full CSI escape sequences (focus, cursor, …)
+    .replace(/\[[IO]/g, '') // focus in/out remnants with the ESC already stripped
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ''); // stray control chars
+  /* eslint-enable no-control-regex */
 }
 
 /** Filter slash commands for the autocomplete palette based on the current input. */

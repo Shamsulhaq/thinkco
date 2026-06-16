@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import React from 'react';
 import { render } from 'ink-testing-library';
-import { App } from '../src/frontends/ink/App.js';
+import { App, sanitizeTypedInput } from '../src/frontends/ink/App.js';
 import { TuiController, filterOverlay } from '../src/frontends/ink/controller.js';
 
 function ctrl() {
@@ -195,5 +195,20 @@ describe('Ink App overlay render', () => {
     expect(frame).toContain('Commands');
     expect(frame).toContain('/help');
     unmount();
+  });
+});
+
+describe('sanitizeTypedInput', () => {
+  it('strips focus-event remnants (ESC stripped) anywhere in the value', () => {
+    expect(sanitizeTypedInput('[O[I[O[I')).toBe('');
+    expect(sanitizeTypedInput('hel[I[Olo')).toBe('hello');
+  });
+  it('strips full CSI escape sequences and control chars', () => {
+    expect(sanitizeTypedInput('\u001b[Ihi\u001b[O')).toBe('hi');
+    expect(sanitizeTypedInput('a\u0007b')).toBe('ab');
+  });
+  it('leaves normal input untouched', () => {
+    expect(sanitizeTypedInput('/help build a site')).toBe('/help build a site');
+    expect(sanitizeTypedInput('arr[0] = x')).toBe('arr[0] = x');
   });
 });

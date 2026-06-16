@@ -136,6 +136,11 @@ export class InkFrontend implements Frontend {
         ) +
         '\n',
     );
+    // Disable terminal "focus reporting" (DECSET 1004). When it's on (often left enabled by a
+    // previous program, tmux, or the terminal config), switching/minimizing the window emits
+    // ESC[I / ESC[O sequences that leak into the input box as "[I"/"[O". We don't use focus
+    // events, so turn it off.
+    if (process.stdout.isTTY) process.stdout.write('\u001b[?1004l');
     // exitOnCtrlC: false — Ink would otherwise quit on the first Ctrl+C before our
     // confirm/interrupt handler in App runs. We handle Ctrl+C ourselves in useInput.
     const instance = render(React.createElement(App, { controller: this.controller }), {
