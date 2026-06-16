@@ -1,0 +1,7 @@
+{
+  "name": "ruflo-core",
+  "version": "0.1.0",
+  "description": "Curated ruflo (claude-flow) coding agents, adapted for thinkco — coder, reviewer, tester, planner, researcher, architect, code-analyzer. Bundled and enabled by default.",
+  "author": "adapted from ruvnet/claude-flow (MIT)",
+  "category": "development"
+}

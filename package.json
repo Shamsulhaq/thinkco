@@ -1,0 +1,77 @@
+{
+  "name": "thinkco",
+  "version": "0.1.0",
+  "description": "Multi-provider agentic coding CLI for the terminal — provider-agnostic, extensible, remote-capable.",
+  "type": "module",
+  "bin": {
+    "thinkco": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "plugins",
+    "install.sh"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "postbuild": "chmod +x dist/cli/index.js",
+    "bundle": "npm run build && node scripts/bundle.mjs",
+    "dev": "tsx src/cli/index.ts",
+    "start": "node dist/cli/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "coding-agent",
+    "llm",
+    "anthropic",
+    "openai",
+    "ollama",
+    "mcp"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "ink": "^5.2.1",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.25.2"
+  },
+  "optionalDependencies": {
+    "@ast-grep/napi": "^0.25.7",
+    "playwright": "^1.45.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.31",
+    "@typescript-eslint/eslint-plugin": "^7.13.0",
+    "@typescript-eslint/parser": "^7.13.0",
+    "esbuild": "^0.28.1",
+    "eslint": "^8.57.0",
+    "ink-testing-library": "^4.0.0",
+    "prettier": "^3.3.2",
+    "tsx": "^4.15.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shamsulhaq/thinkco.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Shamsulhaq/thinkco/issues"
+  },
+  "homepage": "https://github.com/Shamsulhaq/thinkco#readme"
+}

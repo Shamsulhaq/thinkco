@@ -1,0 +1,6 @@
+{
+  "name": "conventional-commits",
+  "version": "0.1.0",
+  "description": "Skill for writing Conventional Commits messages.",
+  "skills": ["skills/conventional-commits"]
+}

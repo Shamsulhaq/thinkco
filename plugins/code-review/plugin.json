@@ -1,0 +1,7 @@
+{
+  "name": "code-review",
+  "version": "0.1.0",
+  "description": "Adds a /review command and a code-review skill.",
+  "commands": ["commands"],
+  "skills": ["skills/code-review"]
+}

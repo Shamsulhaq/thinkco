@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.env
+.env.*
+.thinkco/
+
+# stray runtime/test artifacts
+.swarm/
+*.db
+*.db-shm
+*.db-wal
+*.rvf
+*.rvf.lock
+remote.txt
+<file-path>
