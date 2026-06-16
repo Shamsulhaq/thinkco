@@ -68,6 +68,14 @@ describe('TuiController', () => {
     expect(c.getSnapshot().status.mode).toBe('plan');
   });
 
+  it('log() routes warn to notice and error to an error item', () => {
+    const c = makeController();
+    c.log('warn', '[warn] heads up');
+    c.log('error', '[error] bad');
+    const items = c.getSnapshot().items;
+    expect(items.some((i) => i.kind === 'notice' && /heads up/.test(i.text))).toBe(true);
+    expect(items.some((i) => i.kind === 'error' && i.isError && /bad/.test(i.text))).toBe(true);
+  });
   it('notify adds a notice item to scrollback', () => {
     const c = makeController();
     c.notify('Press Ctrl+C again to exit');

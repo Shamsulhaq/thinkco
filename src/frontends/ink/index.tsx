@@ -12,6 +12,7 @@ import type { AgentSink } from '../../agent/output.js';
 import type { Frontend } from '../types.js';
 import { TuiController } from './controller.js';
 import { App } from './App.js';
+import { logger } from '../../util/logger.js';
 
 export interface InkFrontendOptions {
   config: Config;
@@ -141,12 +142,22 @@ export class InkFrontend implements Frontend {
     // ESC[I / ESC[O sequences that leak into the input box as "[I"/"[O". We don't use focus
     // events, so turn it off.
     if (process.stdout.isTTY) process.stdout.write('\u001b[?1004l');
+    // Capture logger output into the scrollback instead of letting it write raw to stderr —
+    // raw writes during render corrupt Ink's frame (the input box jumps to the top of the screen).
+    logger.setSink((level, line) => {
+      if (level === 'debug' || level === 'info') return; // keep the TUI quiet
+      this.controller.log(level, line);
+    });
     // exitOnCtrlC: false — Ink would otherwise quit on the first Ctrl+C before our
     // confirm/interrupt handler in App runs. We handle Ctrl+C ourselves in useInput.
     const instance = render(React.createElement(App, { controller: this.controller }), {
       exitOnCtrlC: false,
     });
-    await instance.waitUntilExit();
+    try {
+      await instance.waitUntilExit();
+    } finally {
+      logger.setSink(undefined);
+    }
     process.stdout.write(`\n${c.dim('Resume this session:')} thinkco --resume ${this.runtime.session.id}\n`);
   }
 }

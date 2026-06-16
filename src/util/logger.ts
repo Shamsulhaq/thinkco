@@ -12,6 +12,7 @@ const LEVELS: Record<LogLevel, number> = {
 
 export class Logger {
   private level: number;
+  private sink: ((level: LogLevel, line: string) => void) | undefined;
 
   constructor(level: LogLevel = 'info') {
     const envLevel = process.env.THINKCO_LOG_LEVEL as LogLevel | undefined;
@@ -22,10 +23,23 @@ export class Logger {
     this.level = LEVELS[level] ?? LEVELS.info;
   }
 
+  /**
+   * Redirect log output to a custom sink (or back to stderr with `undefined`). Used by the Ink
+   * TUI to capture log lines into the scrollback — writing raw to stderr while a full-screen Ink
+   * app is rendering corrupts its frame accounting (the input box appears to jump to the top).
+   */
+  setSink(sink: ((level: LogLevel, line: string) => void) | undefined): void {
+    this.sink = sink;
+  }
+
   private log(level: LogLevel, prefix: string, args: unknown[]): void {
     if (LEVELS[level] < this.level) return;
-    const stream = level === 'error' || level === 'warn' ? process.stderr : process.stderr;
-    stream.write(`${prefix} ${args.map(fmt).join(' ')}\n`);
+    const line = `${prefix} ${args.map(fmt).join(' ')}`;
+    if (this.sink) {
+      this.sink(level, line);
+      return;
+    }
+    process.stderr.write(`${line}\n`);
   }
 
   debug(...args: unknown[]): void {

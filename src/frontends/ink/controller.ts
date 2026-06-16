@@ -150,6 +150,11 @@ export class TuiController {
     this.addItem('notice', text);
   }
 
+  /** Route a captured logger line into the scrollback (keeps raw logs off the TTY under Ink). */
+  log(level: string, line: string): void {
+    this.addItem(level === 'error' ? 'error' : 'notice', line, level === 'error');
+  }
+
   /** Signal the app to exit (e.g. after /exit). */
   requestExit(): void {
     this.set({ exiting: true });
