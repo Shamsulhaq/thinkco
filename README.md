@@ -84,7 +84,7 @@ Run scheduled tasks in the foreground with `thinkco schedule` (Ctrl-C to stop).
 ## Slash commands
 
 `/help` `/clear` `/compact` `/resume` `/models` `/login` `/mode` `/provider` `/skills` `/plugin`
-`/usage` `/trust` `/init` `/doctor` `/config` `/rename` `/agent` `/goal` `/compose` `/agents` `/budget` `/undo` `/exit`
+`/usage` `/trust` `/init` `/doctor` `/config` `/rename` `/agent` `/goal` `/compose` `/agents` `/budget` `/fallback` `/undo` `/exit`
 
 **Primary agents** (switch with **Tab** or `/agent`): **build** (full tools), **plan** (read-only
 analysis), **compose** (specs-driven orchestration: plan→implement→review→test→verify). `/goal
@@ -103,7 +103,7 @@ analysis), **compose** (specs-driven orchestration: plan→implement→review→
 }
 ```
 
-- **`fallback`** — on a provider error mid-turn, thinkco switches to the next provider/model and retries (notice in the transcript).
+- **`fallback`** — on a provider error mid-turn, thinkco switches to the next provider/model and retries (notice in the transcript). Set it without editing config via **`/fallback openai:gpt-4o, anthropic`** (`/fallback off` clears it); it persists globally.
 - **`maxCostUSD`** — per-session spend cap from live pricing: warns at 80%, hard-stops the turn at 100%. `/budget <usd>` sets it at runtime.
 - **`autoCommit`** — snapshots the git working tree before each turn; **`/undo`** restores the last snapshot.
 - **`modelRouting`** — pick a model (or `provider:model`) per agent (`build`/`plan`/`compose`) or compose phase (`compose:<phase>`).

@@ -145,6 +145,7 @@ export class AgentRuntime {
     this.registerAgentsStatusCommand();
     this.registerBudgetCommand();
     this.registerUndoCommand();
+    this.registerFallbackCommand();
     void import('../util/pricing.js').then((m) => m.loadPricing()).then((p) => this.usage.setPricing(p)).catch(() => {});
 
     for (const cmd of extendedCommands({
@@ -1018,6 +1019,42 @@ export class AgentRuntime {
       },
     });
   }
+  /** Show, set, or clear the provider/model failover chain at runtime (persists globally). */
+  private registerFallbackCommand(): void {
+    this.commands.register({
+      name: 'fallback',
+      description: 'Show/set the failover chain: /fallback | /fallback openai:gpt-4o, anthropic | /fallback off',
+      run: (ctx) => {
+        const arg = ctx.args.trim();
+        if (!arg) {
+          const chain = this.opts.config.fallback;
+          const shown = chain.length
+            ? chain.map((f) => `${f.provider}${f.model ? ':' + f.model : ''}`).join(' → ')
+            : '(none — configure with: /fallback <provider[:model]>, …)';
+          return { handled: true, message: `Active: ${this.state.provider}:${this.state.model}\nFallback chain: ${shown}` };
+        }
+        if (arg === 'off' || arg === 'clear') {
+          this.opts.config.fallback = [];
+          saveGlobalConfig({ fallback: [] }, this.opts.globalConfigDir);
+          return { handled: true, message: 'Fallback chain cleared.' };
+        }
+        const entries = arg
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((s) => {
+            const i = s.indexOf(':');
+            return i > 0
+              ? { provider: s.slice(0, i), model: s.slice(i + 1) }
+              : { provider: s };
+          });
+        this.opts.config.fallback = entries;
+        saveGlobalConfig({ fallback: entries }, this.opts.globalConfigDir);
+        const shown = entries.map((e) => `${e.provider}${e.model ? ':' + e.model : ''}`).join(' → ');
+        return { handled: true, message: `Fallback chain set: ${shown}\nOn a provider error mid-turn, thinkco will switch to the next entry and retry.` };
+      },
+    });
+  }
   /** Apply a model-routing entry ("model" or "provider:model") for an agent/phase key. */
   private applyRouting(key: string): void {
     const route = this.opts.config.modelRouting[key];
@@ -1084,7 +1121,15 @@ export class AgentRuntime {
         this.loopInstance.setMessages(snap);
       }
       await sink.notice(`▶ Compose phase: ${name}`);
-      await this.loopInstance.run(`[COMPOSE · ${name.toUpperCase()} phase] ${instruction}`, sink, signal);
+      await this.runTurnWithFailover(`[COMPOSE · ${name.toUpperCase()} phase] ${instruction}`, sink, signal);
+      if (this.loopInstance.lastError) {
+        await sink.error(
+          `✗ Compose aborted in the "${name}" phase: ${this.loopInstance.lastError}\n` +
+            `The provider/model failed and no working fallback was available. ` +
+            `Add a working provider with /login, then set a fallback chain with /fallback (e.g. "/fallback openai:gpt-4o").`,
+        );
+        return;
+      }
       await this.checkpointAndReconstruct();
     }
     await this.runVerifyGate(sink, signal);

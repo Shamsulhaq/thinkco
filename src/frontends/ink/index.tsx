@@ -72,7 +72,7 @@ export class InkFrontend implements Frontend {
     // Wire tabbed-overlay data for /help and /plugin.
     this.controller.builtinNames = new Set([
       'help', 'clear', 'compact', 'resume', 'models', 'login', 'mode', 'provider', 'skills', 'plugin',
-      'usage', 'trust', 'init', 'doctor', 'config', 'rename', 'exit', 'agent', 'goal', 'compose', 'agents', 'budget', 'undo',
+      'usage', 'trust', 'init', 'doctor', 'config', 'rename', 'exit', 'agent', 'goal', 'compose', 'agents', 'budget', 'undo', 'fallback',
     ]);
     const pluginManager = new PluginManager(join(opts.cwd ?? process.cwd(), '.thinkco', 'plugins'));
     this.controller.pluginsProvider = () => {

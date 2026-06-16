@@ -46,6 +46,8 @@ export interface AgentLoopOptions {
 
 export class AgentLoop {
   readonly messages: Message[] = [];
+  /** Provider error message from the most recent run(), or undefined if it succeeded. */
+  lastError: string | undefined = undefined;
   private readonly opts: Required<Pick<AgentLoopOptions, 'cwd' | 'maxIterations'>> &
     AgentLoopOptions;
 
@@ -65,6 +67,7 @@ export class AgentLoop {
 
   /** Run one user turn to completion (including any tool-use sub-turns). */
   async run(userInput: string, sink: AgentSink, signal?: AbortSignal): Promise<void> {
+    this.lastError = undefined;
     this.messages.push({ role: 'user', content: [{ type: 'text', text: userInput }] });
 
     const toolDefs = this.opts.tools.toToolDefs();
@@ -122,8 +125,9 @@ export class AgentLoop {
         }
       }
       } catch (err) {
+        this.lastError = (err as Error).message ?? String(err);
         if (this.opts.rethrowProviderErrors) throw err;
-        await sink.error(`Provider error: ${(err as Error).message ?? String(err)}`);
+        await sink.error(`Provider error: ${this.lastError}`);
         return;
       }
 

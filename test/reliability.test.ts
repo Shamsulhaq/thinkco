@@ -131,3 +131,40 @@ describe('shell sandbox', () => {
     expect(allow).toBe(true);
   });
 });
+
+describe('/fallback command', () => {
+  it('sets and persists the failover chain', async () => {
+    const rt = runtime();
+    const sink = new RecordingSink();
+    await rt.handleInput('/fallback openai:gpt-4o, anthropic', sink);
+    const reloaded = loadConfig({ globalDir: dir, projectDir: dir });
+    expect(reloaded.fallback).toEqual([
+      { provider: 'openai', model: 'gpt-4o' },
+      { provider: 'anthropic' },
+    ]);
+  });
+
+  it('clears the chain with /fallback off', async () => {
+    const rt = runtime({ fallback: [{ provider: 'openai', model: 'gpt-4o' }] });
+    const sink = new RecordingSink();
+    await rt.handleInput('/fallback off', sink);
+    expect(loadConfig({ globalDir: dir, projectDir: dir }).fallback).toEqual([]);
+  });
+});
+
+describe('compose aborts on a failing provider', () => {
+  it('stops at the failing phase instead of reporting success', async () => {
+    const registry = new ProviderRegistry();
+    registry.register('boom', () => ({
+      // eslint-disable-next-line require-yield
+      chat: async function* () {
+        throw new Error('HTTP 401: free promo ended');
+      },
+    }) as never);
+    const rt = runtime({ defaultProvider: 'boom' }, registry);
+    const sink = new RecordingSink();
+    await rt.handleInput('/compose build a small thing', sink);
+    expect(sink.errors.join(' ')).toMatch(/Compose aborted in the "plan" phase/);
+    expect(sink.notices.join(' ')).not.toMatch(/lifecycle complete/);
+  });
+});

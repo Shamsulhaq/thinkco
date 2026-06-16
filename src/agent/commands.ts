@@ -85,6 +85,7 @@ export function builtinCommands(): SlashCommand[] {
           '/compose            Specs-driven orchestration: /compose <spec>',
           '/agents             List/cancel sub-agents',
           '/budget             Per-session cost cap',
+          '/fallback           Show/set provider failover chain (e.g. /fallback openai:gpt-4o)',
           '/undo               Revert the working tree to the pre-turn snapshot (autoCommit)',
           '/provider <name>    Switch provider',
           '/skills             List available skills',

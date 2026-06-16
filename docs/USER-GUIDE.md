@@ -86,6 +86,7 @@ thinkco schedule                  Run configured scheduled tasks in the foregrou
 | `/compose <spec>` | Specs-driven orchestration: plan→implement→review→test→verify |
 | `/agents` | List sub-agents · `/agents cancel <id>` · `/agents result <id>` |
 | `/budget <usd>` | Per-session cost cap (`off` to clear) |
+| `/fallback ...` | Show/set the provider failover chain: `/fallback openai:gpt-4o, anthropic` · `/fallback off` |
 | `/undo` | Revert the working tree to the pre-turn snapshot (needs `autoCommit`) |
 | `/usage` | Token usage + estimated cost (live pricing) |
 | `/skills` | List available skills |
