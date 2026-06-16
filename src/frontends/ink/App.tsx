@@ -3,6 +3,7 @@ import React, { useSyncExternalStore } from 'react';
 import { Box, Text, Static, useInput, useApp } from 'ink';
 import TextInput from 'ink-text-input';
 import { type TuiController, type TuiItem, filterOverlay } from './controller.js';
+import { randomHint, QUEUE_HINT } from '../../ui/hints.js';
 
 function ItemView({ item }: { item: TuiItem }): React.ReactElement {
   if (item.kind === 'user') {
@@ -58,6 +59,14 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
   const [palIndex, setPalIndex] = React.useState(0);
   const [inputKey, setInputKey] = React.useState(0);
   const [exitArmed, setExitArmed] = React.useState(0);
+  const [hint, setHint] = React.useState(() => randomHint());
+
+  // Rotate the idle input hint so it isn't always the same text.
+  React.useEffect(() => {
+    if (snap.busy) return;
+    const t = setInterval(() => setHint((h) => randomHint(h)), 6000);
+    return () => clearInterval(t);
+  }, [snap.busy]);
   const [, setTick] = React.useState(0);
 
   // Reset the highlighted suggestion whenever the typed input changes.
@@ -309,7 +318,7 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
                 setInput('');
                 if (!controller.tryOpenOverlay(target)) controller.submit(target);
               }}
-              placeholder={snap.busy ? 'working… (Ctrl+C to interrupt)' : 'type a message or /command'}
+              placeholder={snap.busy ? QUEUE_HINT : hint}
             />
           </Box>
         </Box>
