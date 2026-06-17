@@ -16,10 +16,13 @@ class MockTransport implements TelegramTransport {
   deletes: Array<{ chatId: number; messageId: number }> = [];
   actions: Array<{ chatId: number; action: TelegramChatAction }> = [];
   answered: string[] = [];
+  answerError?: Error;
+  events: string[] = [];
   private nextId = 1;
   handler?: (u: TelegramUpdate) => void;
 
   async sendMessage(chatId: number, text: string): Promise<number> {
+    this.events.push(`send:${text}`);
     this.messages.push({ chatId, text });
     return this.nextId++;
   }
@@ -38,6 +41,8 @@ class MockTransport implements TelegramTransport {
     return messageId;
   }
   async answerCallback(callbackId: string): Promise<void> {
+    this.events.push(`answer:${callbackId}`);
+    if (this.answerError) throw this.answerError;
     this.answered.push(callbackId);
   }
   onUpdate(handler: (u: TelegramUpdate) => void): void {
@@ -186,9 +191,18 @@ describe('TelegramFrontend security + messaging', () => {
 
     await fe.handleUpdate({ kind: 'callback', chatId: 12, userId: 111, data: 'act:status', callbackId: 'cb-status', messageId: actionRow.messageId });
     expect(t.messages.at(-1)?.text).toMatch(/provider: scripted/);
+    expect(t.events.findIndex((e) => e === 'answer:cb-status')).toBeLessThan(t.events.findIndex((e) => /send:repo:/.test(e)));
 
     await fe.handleUpdate({ kind: 'callback', chatId: 12, userId: 111, data: 'act:changes', callbackId: 'cb-changes', messageId: actionRow.messageId });
     expect(t.messages.at(-1)?.text).toMatch(/No changed files|Changed files/);
+  });
+
+  it('does not post Telegram stale callback acknowledgement errors into chat', async () => {
+    const t = new MockTransport();
+    t.answerError = new Error('Telegram answerCallbackQuery failed: Bad Request: query is too old and response timeout expired or query ID is invalid');
+    const fe = buildFrontend(t, [111], [], dir);
+    await fe.handleUpdate({ kind: 'callback', chatId: 13, userId: 111, data: 'act:unknown', callbackId: 'old-cb', messageId: 99 });
+    expect(t.messages.map((m) => m.text).join('\n')).not.toMatch(/answerCallbackQuery failed|query is too old/);
   });
 
   it('denies tool use when the user taps deny', async () => {

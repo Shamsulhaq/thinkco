@@ -315,6 +315,20 @@ export class TelegramFrontend implements Frontend {
     }
   }
 
+  private async acknowledgeCallback(callbackId: string | undefined): Promise<void> {
+    if (!callbackId) return;
+    try {
+      await this.transport.answerCallback(callbackId);
+    } catch (err) {
+      // Telegram callback acknowledgements expire quickly. Old button taps must not become
+      // visible chat errors; the action itself is handled separately.
+      if (!/query is too old|response timeout expired|query ID is invalid/i.test(String(err))) {
+        const { logger } = await import('../../util/logger.js');
+        logger.warn(`Telegram answerCallbackQuery failed: ${errorWithCause(err)}`);
+      }
+    }
+  }
+
   /** Numbered-button selection (Telegram has no arrow nav). Caps to 8 options. */
   private promptSelect(chatId: number, title: string, options: string[]): Promise<string | null> {
     return new Promise<string | null>((resolve) => {
@@ -361,6 +375,7 @@ export class TelegramFrontend implements Frontend {
     if (!this.isAllowed(update.userId)) return; // ignore unauthorized users silently
 
     if (update.kind === 'callback') {
+      await this.acknowledgeCallback(update.callbackId);
       const data = update.data ?? '';
       if (data === 'approve' || data === 'deny') {
         const pending = this.pendingApprovals.get(update.chatId);
@@ -382,7 +397,6 @@ export class TelegramFrontend implements Frontend {
       } else if (data.startsWith('act:')) {
         await this.handleAction(update.chatId, update.userId, data.slice(4));
       }
-      if (update.callbackId) await this.transport.answerCallback(update.callbackId);
       return;
     }
 

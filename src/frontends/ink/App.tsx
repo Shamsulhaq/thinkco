@@ -1,6 +1,6 @@
 /** Ink TUI App: scrollback + live stream + status bar + persistent input, with overlays. */
 import React, { useSyncExternalStore } from 'react';
-import { Box, Text, Static, useInput, useApp } from 'ink';
+import { Box, Text, useInput, useApp, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
 import { type TuiController, type TuiItem, filterOverlay } from './controller.js';
 import { randomHint, QUEUE_HINT } from '../../ui/hints.js';
@@ -54,6 +54,7 @@ function ItemView({ item }: { item: TuiItem }): React.ReactElement {
 export function App({ controller }: { controller: TuiController }): React.ReactElement {
   const snap = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const { exit } = useApp();
+  const { stdout } = useStdout();
   const [input, setInput] = React.useState('');
   const [reqValue, setReqValue] = React.useState('');
   const [palIndex, setPalIndex] = React.useState(0);
@@ -85,6 +86,7 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
   }, [snap.busy]);
 
   const palette = !snap.busy ? filterCommandPalette(input, controller.commands) : [];
+  const visibleItems = visibleTranscriptItems(snap.items, stdout.rows);
 
   useInput((ch, key) => {
     if (key.tab && key.shift) {
@@ -162,22 +164,25 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
   });
 
   return (
-    <Box flexDirection="column">
-      <Static items={snap.items}>{(item) => <ItemView key={item.id} item={item} />}</Static>
+    <Box flexDirection="column" height={stdout.rows || undefined}>
+      <Box flexDirection="column" flexGrow={1} justifyContent="flex-end" overflow="hidden">
+        {visibleItems.map((item) => <ItemView key={item.id} item={item} />)}
 
-      {snap.stream ? (
+        {snap.stream ? (
+          <Box marginTop={1}>
+            <Text color="magenta">{'✦ '}</Text>
+            <Text>{snap.stream}</Text>
+          </Box>
+        ) : null}
+
+        {snap.items.length === 0 && !snap.stream && !snap.busy ? (
+          <Text dimColor>Ask me to build, fix, or explain something — I&apos;ll use tools to do it.</Text>
+        ) : null}
+      </Box>
+
+      <Box flexDirection="column" flexShrink={0}>
+        {/* Activity status line. */}
         <Box marginTop={1}>
-          <Text color="magenta">{'✦ '}</Text>
-          <Text>{snap.stream}</Text>
-        </Box>
-      ) : null}
-
-      {snap.items.length === 0 && !snap.stream && !snap.busy ? (
-        <Text dimColor>Ask me to build, fix, or explain something — I&apos;ll use tools to do it.</Text>
-      ) : null}
-
-      {/* Activity status line. */}
-      <Box marginTop={1}>
         <Text dimColor>
           {snap.busy ? `${spinnerDot()} ` : ''}
           {snap.status.provider} · {snap.status.model} · {snap.status.mode}
@@ -190,11 +195,11 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
               }`
             : ''}
         </Text>
-      </Box>
+        </Box>
 
-      {/* Approval menu. */}
-      {snap.approval ? (
-        <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
+        {/* Approval menu. */}
+        {snap.approval ? (
+          <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
           <Text color="yellow">Approve action?</Text>
           <Text>{snap.approval.summary}</Text>
           <Box marginTop={1} flexDirection="column">
@@ -206,12 +211,12 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
             ))}
           </Box>
           <Text dimColor>↑/↓ then Enter · or press 1/2/3 · Esc to deny</Text>
-        </Box>
-      ) : null}
+          </Box>
+        ) : null}
 
-      {/* Select overlay (model picker). */}
-      {snap.select ? (
-        <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
+        {/* Select overlay (model picker). */}
+        {snap.select ? (
+          <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
           <Text dimColor>{snap.select.title} (↑/↓, Enter, Esc)</Text>
           {snap.select.options.map((opt, i) => (
             <Text key={opt} color={i === snap.select!.index ? 'cyan' : undefined}>
@@ -219,12 +224,12 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
               {opt}
             </Text>
           ))}
-        </Box>
-      ) : null}
+          </Box>
+        ) : null}
 
-      {/* Free-text input request (e.g. API key). */}
-      {snap.inputReq ? (
-        <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1}>
+        {/* Free-text input request (e.g. API key). */}
+        {snap.inputReq ? (
+          <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1}>
           <Text color="green">{snap.inputReq.prompt}</Text>
           <Box>
             <Text color="cyan">❯ </Text>
@@ -239,12 +244,12 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
             />
           </Box>
           <Text dimColor>Enter to submit · empty to cancel</Text>
-        </Box>
-      ) : null}
+          </Box>
+        ) : null}
 
-      {/* Tabbed overlay (/help, /plugin). */}
-      {snap.overlay ? (
-        <Box flexDirection="column" borderStyle="round" borderColor="blue" paddingX={1}>
+        {/* Tabbed overlay (/help, /plugin). */}
+        {snap.overlay ? (
+          <Box flexDirection="column" borderStyle="round" borderColor="blue" paddingX={1}>
           <Box>
             <Text bold color="blue">{snap.overlay.title} </Text>
             {snap.overlay.tabs.map((tab, i) => (
@@ -279,12 +284,12 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
             );
           })()}
           <Text dimColor>type to search · ←/→ tabs · ↑/↓ move · Enter select · Esc close</Text>
-        </Box>
-      ) : null}
+          </Box>
+        ) : null}
 
-      {/* Command palette (autocomplete) above the input. */}
-      {palette.length && !snap.approval && !snap.select && !snap.overlay ? (
-        <Box flexDirection="column" marginTop={1}>
+        {/* Command palette (autocomplete) above the input. */}
+        {palette.length && !snap.approval && !snap.select && !snap.overlay ? (
+          <Box flexDirection="column" marginTop={1}>
           {palette.map((cmd, i) => {
             const selected = i === Math.min(palIndex, palette.length - 1);
             return (
@@ -297,12 +302,12 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
             );
           })}
           <Text dimColor>↑/↓ select · Tab complete · Enter run</Text>
-        </Box>
-      ) : null}
+          </Box>
+        ) : null}
 
-      {/* Persistent input — modern bordered box with a context hint line. */}
-      {!snap.approval && !snap.select && !snap.overlay && !snap.inputReq ? (
-        <Box flexDirection="column" marginTop={1}>
+        {/* Persistent input. */}
+        {!snap.approval && !snap.select && !snap.overlay && !snap.inputReq ? (
+          <Box flexDirection="column" marginTop={1}>
           <Box>
             <Text color={snap.busy ? 'yellow' : 'cyan'} bold>
               {snap.busy ? `${spinnerDot()} ` : '❯ '}
@@ -321,10 +326,16 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
               placeholder={snap.busy ? QUEUE_HINT : hint}
             />
           </Box>
-        </Box>
-      ) : null}
+          </Box>
+        ) : null}
+      </Box>
     </Box>
   );
+}
+
+export function visibleTranscriptItems(items: TuiItem[], rows?: number): TuiItem[] {
+  const max = Math.max(1, Math.min(80, (rows ?? 30) - 8));
+  return items.slice(-max);
 }
 
 let dotFrame = 0;

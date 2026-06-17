@@ -4,7 +4,7 @@ import { render } from 'ink-testing-library';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { App, sanitizeTypedInput } from '../src/frontends/ink/App.js';
+import { App, sanitizeTypedInput, visibleTranscriptItems } from '../src/frontends/ink/App.js';
 import { pluginOverlayItems } from '../src/frontends/ink/index.js';
 import { TuiController, filterOverlay } from '../src/frontends/ink/controller.js';
 import { PluginManager } from '../src/plugins/manager.js';
@@ -112,6 +112,21 @@ describe('Ink App', () => {
     release(); // finish 'second' → drains 'third'
     await new Promise((r) => setTimeout(r, 0));
     expect(runs).toEqual(['first', 'second', 'third']);
+  });
+
+  it('keeps the latest transcript items visible near the bottom prompt', () => {
+    const c = ctrl();
+    for (let i = 0; i < 40; i++) c.notify(`old-${i}`);
+    const window = visibleTranscriptItems(c.getSnapshot().items, 18);
+    expect(window.map((i) => i.text)).not.toContain('old-0');
+    expect(window.at(-1)?.text).toBe('old-39');
+
+    const { lastFrame, unmount } = render(React.createElement(App, { controller: c }));
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('old-39');
+    expect(frame).toContain('ollama · qwen · default');
+    expect(frame.lastIndexOf('❯')).toBeGreaterThan(frame.lastIndexOf('ollama · qwen · default'));
+    unmount();
   });
 });
 
