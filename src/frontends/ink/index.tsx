@@ -146,6 +146,7 @@ export class InkFrontend implements Frontend {
     const header =
       cols >= LOGO_WIDTH + 3 + boxW ? sideBySide(logo, infoBox) : `${logo}\n${infoBox}`;
     process.stdout.write('\n' + header + '\n');
+    const reservedTopRows = header.split('\n').length + 2;
     // Disable terminal "focus reporting" (DECSET 1004). When it's on (often left enabled by a
     // previous program, tmux, or the terminal config), switching/minimizing the window emits
     // ESC[I / ESC[O sequences that leak into the input box as "[I"/"[O". We don't use focus
@@ -159,7 +160,7 @@ export class InkFrontend implements Frontend {
     });
     // exitOnCtrlC: false — Ink would otherwise quit on the first Ctrl+C before our
     // confirm/interrupt handler in App runs. We handle Ctrl+C ourselves in useInput.
-    const instance = render(React.createElement(App, { controller: this.controller }), {
+    const instance = render(React.createElement(App, { controller: this.controller, reservedTopRows }), {
       exitOnCtrlC: false,
     });
     try {

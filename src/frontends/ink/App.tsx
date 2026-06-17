@@ -51,7 +51,7 @@ function ItemView({ item }: { item: TuiItem }): React.ReactElement {
   return <Text>{item.text}</Text>;
 }
 
-export function App({ controller }: { controller: TuiController }): React.ReactElement {
+export function App({ controller, reservedTopRows = 0 }: { controller: TuiController; reservedTopRows?: number }): React.ReactElement {
   const snap = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -86,7 +86,8 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
   }, [snap.busy]);
 
   const palette = !snap.busy ? filterCommandPalette(input, controller.commands) : [];
-  const visibleItems = visibleTranscriptItems(snap.items, stdout.rows);
+  const frameRows = Math.max(8, (stdout.rows || 30) - reservedTopRows);
+  const visibleItems = visibleTranscriptItems(snap.items, frameRows, stdout.columns);
 
   useInput((ch, key) => {
     if (key.tab && key.shift) {
@@ -164,7 +165,7 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
   });
 
   return (
-    <Box flexDirection="column" height={stdout.rows || undefined}>
+    <Box flexDirection="column" height={frameRows || undefined}>
       <Box flexDirection="column" flexGrow={1} justifyContent="flex-end" overflow="hidden">
         {visibleItems.map((item) => <ItemView key={item.id} item={item} />)}
 
@@ -333,9 +334,46 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
   );
 }
 
-export function visibleTranscriptItems(items: TuiItem[], rows?: number): TuiItem[] {
-  const max = Math.max(1, Math.min(80, (rows ?? 30) - 8));
-  return items.slice(-max);
+export function visibleTranscriptItems(items: TuiItem[], rows?: number, columns?: number): TuiItem[] {
+  const budget = Math.max(1, Math.min(120, (rows ?? 30) - 7));
+  const width = Math.max(20, (columns ?? 100) - 8);
+  const picked: TuiItem[] = [];
+  let used = 0;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]!;
+    const cost = estimateItemRows(item, width);
+    if (picked.length && used + cost > budget) {
+      const remaining = budget - used;
+      if (remaining > 1) picked.unshift({ ...item, text: trimTextToRows(item.text, remaining, width) });
+      break;
+    }
+    if (!picked.length && cost > budget) {
+      picked.unshift({ ...item, text: trimTextToRows(item.text, budget, width) });
+      break;
+    }
+    picked.unshift(item);
+    used += cost;
+  }
+  return picked;
+}
+
+function estimateItemRows(item: TuiItem, width: number): number {
+  const margin = item.kind === 'user' || item.kind === 'assistant' ? 1 : 0;
+  return margin + item.text.split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / width)), 0);
+}
+
+function trimTextToRows(text: string, rows: number, width: number): string {
+  const lines = text.split('\n');
+  const kept: string[] = [];
+  let used = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    const cost = Math.max(1, Math.ceil(line.length / width));
+    if (kept.length && used + cost > rows) break;
+    kept.unshift(line);
+    used += cost;
+  }
+  return kept.length === lines.length ? text : `…\n${kept.join('\n')}`;
 }
 
 let dotFrame = 0;

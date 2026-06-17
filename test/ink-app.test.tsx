@@ -117,7 +117,7 @@ describe('Ink App', () => {
   it('keeps the latest transcript items visible near the bottom prompt', () => {
     const c = ctrl();
     for (let i = 0; i < 40; i++) c.notify(`old-${i}`);
-    const window = visibleTranscriptItems(c.getSnapshot().items, 18);
+    const window = visibleTranscriptItems(c.getSnapshot().items, 18, 80);
     expect(window.map((i) => i.text)).not.toContain('old-0');
     expect(window.at(-1)?.text).toBe('old-39');
 
@@ -126,6 +126,22 @@ describe('Ink App', () => {
     expect(frame).toContain('old-39');
     expect(frame).toContain('ollama · qwen · default');
     expect(frame.lastIndexOf('❯')).toBeGreaterThan(frame.lastIndexOf('ollama · qwen · default'));
+    unmount();
+  });
+
+  it('reserves banner rows and trims oversized transcript items', () => {
+    const c = ctrl();
+    c.sink().text(Array.from({ length: 80 }, (_, i) => `line-${i}`).join('\n'));
+    c.sink().usage({ inputTokens: 1, outputTokens: 1 });
+    c.sink().notice('Worked for 1s · Context window 1% used (1/60k tokens)');
+    const window = visibleTranscriptItems(c.getSnapshot().items, 14, 80);
+    expect(window.at(0)?.text.startsWith('…\n')).toBe(true);
+    expect(window.at(-1)?.text).toContain('Worked for');
+
+    const { lastFrame, unmount } = render(React.createElement(App, { controller: c, reservedTopRows: 8 }));
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('ollama · qwen · default');
+    expect(frame).toContain('❯');
     unmount();
   });
 });
