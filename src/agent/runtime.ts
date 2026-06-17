@@ -20,7 +20,7 @@ import { PluginManager } from '../plugins/manager.js';
 import { loadClaudePlugin } from '../plugins/claudeAdapter.js';
 import { HookRunner, type HookConfig } from '../workflows/hooks.js';
 import { UsageTracker } from '../util/usage.js';
-import type { AgentSink } from './output.js';
+import type { AgentSink, TurnSummary } from './output.js';
 import { runSubagent } from '../workflows/subagent.js';
 import { GitSnap } from '../workflows/checkpointGit.js';
 import { z } from 'zod';
@@ -33,6 +33,14 @@ import type { CommandHost } from './commands/host.js';
 import type { PluginSinks, PluginActivationResult } from '../plugins/index.js';
 
 const CONTEXT_WINDOW_TOKENS = 60_000;
+
+interface ActiveTurnStats {
+  toolCalls: number;
+  toolNames: string[];
+  approvals: number;
+  inputTokens: number;
+  outputTokens: number;
+}
 
 function formatDuration(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));
@@ -112,6 +120,8 @@ export class AgentRuntime {
   private readonly cwd: string;
   private readonly pluginManager: PluginManager;
   private skipPersistOnce = false;
+  private activeTurn?: ActiveTurnStats;
+  private lastTurn?: TurnSummary;
 
   constructor(private readonly opts: AgentRuntimeOptions) {
     this.cwd = opts.cwd ?? process.cwd();
@@ -188,7 +198,10 @@ export class AgentRuntime {
 
     this.engine = new PermissionEngine({
       rules: opts.config.permissions,
-      prompt: (p) => opts.ui.approve(p),
+      prompt: (p) => {
+        if (this.activeTurn) this.activeTurn.approvals += 1;
+        return opts.ui.approve(p);
+      },
       audit: new FileAuditLog(opts.auditPath ?? join(this.cwd, '.thinkco', 'audit.log')),
       origin: opts.origin ?? 'cli',
       mode: opts.config.permissions.defaultMode,
@@ -238,6 +251,43 @@ export class AgentRuntime {
     return this.commands.list().map((cmd) => `/${cmd.name}`).sort();
   }
 
+  latestTurnSummary(): TurnSummary | undefined {
+    return this.lastTurn;
+  }
+
+  statusSummary(extra: { busy?: boolean; queueLength?: number } = {}): string {
+    const lines = [
+      `repo:     ${this.cwd}`,
+      `provider: ${this.state.provider}`,
+      `model:    ${this.state.model}`,
+      `mode:     ${this.engine.getMode()}`,
+    ];
+    if (extra.busy !== undefined) lines.push(`state:    ${extra.busy ? 'busy' : 'idle'}${extra.queueLength ? ` (${extra.queueLength} queued)` : ''}`);
+    if (this.lastTurn) lines.push(`last:     ${this.lastTurn.text}`);
+    return lines.join('\n');
+  }
+
+  changesSummary(): string {
+    const files = this.gitChangedFiles(40);
+    if (!files.length) return 'No changed files.';
+    return ['Changed files:', ...files.map((f) => `- ${f}`), '', 'Use /undo to revert the last autoCommit snapshot when enabled.'].join('\n');
+  }
+
+  private lastTurnDetails(): string {
+    const t = this.lastTurn;
+    if (!t) return 'No completed turn yet.';
+    const tools = t.toolNames.length ? Array.from(new Set(t.toolNames)).join(', ') : 'none';
+    const files = t.fileChanges.length ? t.fileChanges.slice(0, 12).join(', ') : 'none';
+    return [
+      t.text,
+      `Provider/model: ${t.provider} · ${t.model}`,
+      `Tools: ${t.toolCalls} (${tools})`,
+      `Approvals: ${t.approvals}`,
+      `Tokens this turn: in ${t.inputTokens} / out ${t.outputTokens}`,
+      `Files changed: ${files}`,
+    ].join('\n');
+  }
+
   private commandHost(): CommandHost {
     return {
       state: this.state,
@@ -257,6 +307,7 @@ export class AgentRuntime {
       configuredProviders: () => this.configuredProviders(),
       switchProvider: (id) => this.switchProvider(id),
       finishLogin: () => this.finishLogin(),
+      providerStatus: () => this.providerStatus(),
       selectModelForProvider: (provider, opts) => this.selectModelForProvider(provider, opts),
       setSkipPersistOnce: (v) => {
         this.skipPersistOnce = v;
@@ -306,6 +357,26 @@ export class AgentRuntime {
             `Cycle with Shift+Tab, or /mode <name>. Modes: default, acceptEdits, plan, dontAsk, auto, bypass.`,
         };
       },
+    });
+    this.commands.register({
+      name: 'turn',
+      description: 'Show the latest turn details',
+      run: () => ({ handled: true, message: this.lastTurnDetails() }),
+    });
+    this.commands.register({
+      name: 'status',
+      description: 'Show runtime status: repo, provider/model, mode, and latest turn',
+      run: () => ({ handled: true, message: this.statusSummary() }),
+    });
+    this.commands.register({
+      name: 'details',
+      description: 'Show the latest turn details',
+      run: () => ({ handled: true, message: this.lastTurnDetails() }),
+    });
+    this.commands.register({
+      name: 'changes',
+      description: 'Show changed files in the working tree',
+      run: () => ({ handled: true, message: this.changesSummary() }),
     });
     this.commands.register({
       name: 'trust',
@@ -371,6 +442,26 @@ export class AgentRuntime {
     return `Removed "${name}". Restart clears any commands or skills already loaded from this plugin.`;
   }
 
+  pluginDoctor(name: string): string {
+    const d = this.pluginManager.diagnose(name);
+    const lines = [
+      `Plugin: ${d.name}`,
+      `installed: ${d.installed ? 'yes' : 'no'}`,
+      `enabled:   ${d.enabled ? 'yes' : 'no'}`,
+      `manifest:  ${d.manifestValid ? 'ok' : 'error'}`,
+    ];
+    if (d.commands.length) lines.push(`commands:  ${d.commands.map((c) => `/${c}`).join(', ')}`);
+    if (d.skills.length) lines.push(`skills:    ${d.skills.join(', ')}`);
+    if (d.hooks.length) lines.push(`hooks:     ${d.hooks.join(', ')}`);
+    if (d.mcpServers.length) lines.push(`mcp:       ${d.mcpServers.join(', ')} (restart required)`);
+    if (d.error) lines.push(`error:     ${d.error}`);
+    if (!d.installed) lines.push(`fix:       /plugin install ${name}`);
+    else if (!d.enabled) lines.push(`fix:       /plugin enable ${name}`);
+    else if (d.restartRequired.length) lines.push('fix:       restart thinkco to load MCP servers.');
+    else lines.push('status:    installed and hot-loadable.');
+    return lines.join('\n');
+  }
+
   listPlugins(): Array<{ name: string; enabled: boolean }> {
     return this.pluginManager.list().map((name) => ({ name, enabled: this.pluginManager.isEnabled(name) }));
   }
@@ -378,7 +469,7 @@ export class AgentRuntime {
   private registerPluginCommand(): void {
     this.commands.register({
       name: 'plugin',
-      description: 'Manage plugins: /plugin [search <q>|install <src>|enable <n>|disable <n>|remove <n>]',
+      description: 'Manage plugins: /plugin [search <q>|install <src>|enable <n>|disable <n>|remove <n>|doctor <n>]',
       run: async (ctx) => {
         const [sub, ...rest] = ctx.args.split(/\s+/).filter(Boolean);
         const arg = rest.join(' ');
@@ -395,6 +486,9 @@ export class AgentRuntime {
           }
           if (sub === 'install' && arg) {
             return { handled: true, message: this.installPlugin(arg) };
+          }
+          if (sub === 'doctor' && arg) {
+            return { handled: true, message: this.pluginDoctor(arg) };
           }
           if (sub === 'enable' && arg) {
             return { handled: true, message: this.enablePlugin(arg) };
@@ -413,8 +507,8 @@ export class AgentRuntime {
           handled: true,
           message:
             (installed.length
-              ? installed.map((n) => `- ${n}${this.pluginManager.isEnabled(n) ? ' [enabled]' : ''}`).join('\n')
-              : 'No plugins installed.') + '\nUse: /plugin install <git-url|path> · enable/disable/remove <name>',
+              ? installed.map((n) => `- ${n}${this.pluginManager.isEnabled(n) ? ' [enabled, loaded]' : ' [installed, disabled]'}`).join('\n')
+              : 'No plugins installed.') + '\nUse: /plugin install <git-url|path> · enable/disable/remove/doctor <name>',
         };
       },
     });
@@ -859,15 +953,27 @@ export class AgentRuntime {
   private withUsageTracking(sink: AgentSink): AgentSink {
     return {
       text: (d) => sink.text(d),
-      toolCall: (c) => sink.toolCall(c),
+      thinking: (d) => sink.thinking?.(d),
+      toolCall: (c) => {
+        if (this.activeTurn) {
+          this.activeTurn.toolCalls += 1;
+          this.activeTurn.toolNames.push(c.name);
+        }
+        return sink.toolCall(c);
+      },
       toolResult: (c, r) => sink.toolResult(c, r),
       usage: (u) => {
+        if (this.activeTurn) {
+          this.activeTurn.inputTokens += u.inputTokens;
+          this.activeTurn.outputTokens += u.outputTokens;
+        }
         this.usage.add(u);
         this.checkBudget(sink);
         return sink.usage(u);
       },
       notice: (m) => sink.notice(m),
       error: (m) => sink.error(m),
+      turnSummary: (s) => sink.turnSummary?.(s),
     };
   }
 
@@ -909,6 +1015,8 @@ export class AgentRuntime {
     const input = line.trim();
     if (!input) return { exit: false };
     const startedAt = Date.now();
+    const turnStats = this.emptyTurnStats();
+    this.activeTurn = turnStats;
     const tracked = this.withUsageTracking(sink);
     const turnSignal = this.beginBudgetTurn(signal);
 
@@ -916,7 +1024,10 @@ export class AgentRuntime {
       const before = { provider: this.state.provider, model: this.state.model };
       const result = await this.commands.dispatch(input, this.state);
       if (result.message) await sink.notice(result.message);
-      if (this.state.exit) return { exit: true };
+      if (this.state.exit) {
+        this.activeTurn = undefined;
+        return { exit: true };
+      }
       if (this.state.clear) {
         this.state.clear = false;
         this.loopInstance.setMessages([]);
@@ -932,15 +1043,16 @@ export class AgentRuntime {
       if (result.prompt) {
         await this.loopInstance.run(result.prompt, tracked, turnSignal);
         this.persist();
-        await sink.notice(this.completionSummary(startedAt));
+        await this.emitCompletionSummary(sink, startedAt, turnStats);
       }
       if (this.composeSpec) {
         const spec = this.composeSpec;
         this.composeSpec = undefined;
         await this.runCompose(spec, tracked, turnSignal);
         this.persist();
-        await sink.notice(this.completionSummary(startedAt));
+        await this.emitCompletionSummary(sink, startedAt, turnStats);
       }
+      this.activeTurn = undefined;
       return { exit: false };
     }
 
@@ -992,15 +1104,75 @@ export class AgentRuntime {
       this.engine.clearTransientAllow();
     }
     this.persist();
-    await sink.notice(this.completionSummary(startedAt));
+    await this.emitCompletionSummary(sink, startedAt, turnStats);
+    this.activeTurn = undefined;
     return { exit: false };
   }
 
-  private completionSummary(startedAt: number): string {
+  private gitChangedFiles(limit = 20): string[] {
+    try {
+      const out = execSync('git status --porcelain', { cwd: this.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      const files = out
+        .split('\n')
+        .map((line) => line.trimEnd())
+        .filter(Boolean)
+        .map((line) => {
+          const raw = line.slice(3);
+          const renamed = raw.includes(' -> ') ? raw.split(' -> ').at(-1)! : raw;
+          return renamed.replace(/^"|"$/g, '');
+        });
+      return files.slice(0, limit);
+    } catch {
+      return [];
+    }
+  }
+
+  private providerStatus(): string {
+    const configured = this.configuredProviders();
+    const fallback = this.opts.config.fallback.length
+      ? this.opts.config.fallback.map((f) => `${f.provider}${f.model ? ':' + f.model : ''}`).join(' → ')
+      : '(none)';
+    return [
+      `Provider: ${this.state.provider}`,
+      `Model: ${this.state.model}`,
+      `Configured providers: ${configured.join(', ') || '(none)'}`,
+      `Fallback chain: ${fallback}`,
+      `Use /provider <name> to switch · /models refresh to fetch models again.`,
+    ].join('\n');
+  }
+
+  private completionSummary(startedAt: number, stats: ActiveTurnStats = this.emptyTurnStats()): TurnSummary {
     const elapsed = Date.now() - startedAt;
     const used = estimateMessagesTokens(this.loopInstance.messages);
     const pct = Math.min(100, Math.round((used / CONTEXT_WINDOW_TOKENS) * 100));
-    return `Worked for ${formatDuration(elapsed)} · Context window ${pct}% used (${formatTokenCount(used)}/${formatTokenCount(CONTEXT_WINDOW_TOKENS)} tokens)`;
+    const text = `Worked for ${formatDuration(elapsed)} · Context window ${pct}% used (${formatTokenCount(used)}/${formatTokenCount(CONTEXT_WINDOW_TOKENS)} tokens)`;
+    return {
+      elapsedMs: elapsed,
+      elapsed: formatDuration(elapsed),
+      contextUsed: used,
+      contextLimit: CONTEXT_WINDOW_TOKENS,
+      contextPercent: pct,
+      provider: this.state.provider,
+      model: this.state.model,
+      toolCalls: stats.toolCalls,
+      toolNames: stats.toolNames,
+      approvals: stats.approvals,
+      fileChanges: this.gitChangedFiles(20),
+      inputTokens: stats.inputTokens,
+      outputTokens: stats.outputTokens,
+      text,
+    };
+  }
+
+  private emptyTurnStats(): ActiveTurnStats {
+    return { toolCalls: 0, toolNames: [], approvals: 0, inputTokens: 0, outputTokens: 0 };
+  }
+
+  private async emitCompletionSummary(sink: AgentSink, startedAt: number, stats: ActiveTurnStats): Promise<void> {
+    const summary = this.completionSummary(startedAt, stats);
+    this.lastTurn = summary;
+    await sink.turnSummary?.(summary);
+    await sink.notice(summary.text);
   }
 
   /**
@@ -1130,7 +1302,10 @@ export class AgentRuntime {
     for (let i = 0; i < chain.length; i++) {
       if (i > 0) {
         const next = chain[i]!;
-        await sink.notice(`⚠ ${this.state.provider}·${this.state.model} failed (${lastErr}); switching to ${next.provider}·${next.model}`);
+        await sink.notice(
+          `⚠ ${this.state.provider}·${this.state.model} failed (${lastErr}); switching to ${next.provider}·${next.model}. ` +
+            `Run /provider status or /models refresh to inspect model availability.`,
+        );
         this.state.provider = next.provider;
         this.state.model = next.model;
         this.loopInstance = this.buildLoop();

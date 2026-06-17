@@ -147,6 +147,14 @@ describe('/provider command', () => {
     expect(sink.notices.join(' ')).toMatch(/Unknown provider "nope"/);
   });
 
+  it('reports provider status', async () => {
+    const rt = runtime({ approve: async () => true, select: async () => null, input: async () => null });
+    const sink = new RecordingSink();
+    await rt.handleInput('/provider status', sink);
+    expect(sink.notices.join('\n')).toMatch(/Provider: fake/);
+    expect(sink.notices.join('\n')).toMatch(/Use \/provider <name>/);
+  });
+
   it('lists configured providers and switches via the picker', async () => {
     let offered: string[] = [];
     const ui: RuntimeUI = {
@@ -184,6 +192,29 @@ describe('/usage tracking', () => {
     const sink = new RecordingSink();
     await rt.handleInput('hello there', sink);
     expect(sink.notices.join('\n')).toMatch(/Worked for \d+(m \d{2}s|s) · Context window \d+% used \([^)]+ tokens\)/);
+    expect(sink.turnSummaries[0]?.text).toMatch(/Worked for/);
+  });
+
+  it('shows latest turn details and runtime status', async () => {
+    const rt = runtime({ approve: async () => true, select: async () => null });
+    await rt.handleInput('hello there', new RecordingSink());
+
+    const turn = new RecordingSink();
+    await rt.handleInput('/turn', turn);
+    expect(turn.notices.join('\n')).toMatch(/Provider\/model: fake · fake-1/);
+    expect(turn.notices.join('\n')).toMatch(/Tokens this turn:/);
+
+    const status = new RecordingSink();
+    await rt.handleInput('/status', status);
+    expect(status.notices.join('\n')).toMatch(/provider: fake/);
+    expect(status.notices.join('\n')).toMatch(/last:\s+Worked for/);
+  });
+
+  it('shows changed files command output without a git repository', async () => {
+    const rt = runtime({ approve: async () => true, select: async () => null });
+    const sink = new RecordingSink();
+    await rt.handleInput('/changes', sink);
+    expect(sink.notices.join('\n')).toBe('No changed files.');
   });
 });
 
@@ -195,5 +226,16 @@ describe('/plugin command', () => {
     expect(sink.notices.join(' ')).toMatch(/Installed and loaded "code-review"/);
     expect(rt.commandNames()).toContain('/review');
     expect(rt.skillRegistry.list().map((s) => s.name)).toContain('code-review');
+  });
+
+  it('explains plugin load state with /plugin doctor', async () => {
+    const rt = runtime({ approve: async () => true, select: async () => null, input: async () => null });
+    await rt.handleInput('/plugin install code-review', new RecordingSink());
+    const sink = new RecordingSink();
+    await rt.handleInput('/plugin doctor code-review', sink);
+    const text = sink.notices.join('\n');
+    expect(text).toContain('Plugin: code-review');
+    expect(text).toContain('installed: yes');
+    expect(text).toContain('enabled:   yes');
   });
 });

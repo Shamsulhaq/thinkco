@@ -153,15 +153,18 @@ function doctorCommand(deps: BuiltinDeps): SlashCommand {
             ? 'set'
             : 'MISSING';
       const lines = [
-        `thinkco v${VERSION}  ·  node ${process.version}`,
-        `provider:    ${deps.state.provider}  (api key: ${providerKey})`,
-        `model:       ${deps.state.model}`,
-        `mode:        ${deps.getMode()}`,
-        `tools:       ${deps.tools.list().length}`,
-        `skills:      ${deps.skills.list().length}`,
-        `mcpServers:  ${Object.keys(cfg.mcpServers).length}`,
-        `permissions: allow=${cfg.permissions.allow.length} deny=${cfg.permissions.deny.length} sandbox=${cfg.permissions.sandbox}`,
-        `cwd:         ${deps.cwd}`,
+        `ok    thinkco v${VERSION} · node ${process.version}`,
+        `${providerKey === 'MISSING' ? 'error' : 'ok'} provider: ${deps.state.provider} (api key: ${providerKey})`,
+        `ok    model: ${deps.state.model}`,
+        `ok    mode: ${deps.getMode()}`,
+        `ok    tools: ${deps.tools.list().length}`,
+        `ok    skills: ${deps.skills.list().length}`,
+        `${Object.keys(cfg.mcpServers).length ? 'ok' : 'warn'}  mcpServers: ${Object.keys(cfg.mcpServers).length || 0}`,
+        `${cfg.permissions.sandbox ? 'ok' : 'warn'}  permissions: allow=${cfg.permissions.allow.length} deny=${cfg.permissions.deny.length} sandbox=${cfg.permissions.sandbox}`,
+        `ok    cwd: ${deps.cwd}`,
+        '',
+        providerKey === 'MISSING' ? 'fix   run /login or set the provider API key in config.' : 'fix   run /provider status or /models refresh if model calls fail.',
+        cfg.permissions.sandbox ? 'fix   sandbox is enabled.' : 'fix   consider enabling permissions.sandbox for stronger shell safety.',
       ];
       return { handled: true, message: lines.join('\n') };
     },

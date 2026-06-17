@@ -54,6 +54,7 @@ export interface CommandHost {
   configuredProviders(): string[];
   switchProvider(id: string): Promise<string>;
   finishLogin(): Promise<string>;
+  providerStatus(): string;
   selectModelForProvider(provider: string, opts?: { prompt?: boolean; saveScope?: boolean; title?: string }): Promise<{
     model: string;
     liveCount: number;

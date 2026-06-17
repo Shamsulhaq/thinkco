@@ -90,6 +90,7 @@ describe('TelegramFrontend security + messaging', () => {
     const finalText = t.edits.at(-1)?.text ?? t.messages.at(-1)?.text ?? '';
     expect(finalText).toMatch(/────────────\s+Worked for \d+(m \d{2}s|s) · Context window \d+% used \([^)]+ tokens\)/);
     expect((finalText.match(/────────────/g) ?? []).length).toBe(1);
+    expect(t.buttons.at(-1)?.buttons.map((b) => b.text)).toEqual(['Status', 'Changes', 'Run tests', 'Continue', 'Undo']);
   });
 
   it('handles slash commands via the shared runtime (e.g. /help)', async () => {
@@ -149,7 +150,7 @@ describe('TelegramFrontend security + messaging', () => {
       dir,
     );
     await fe.handleUpdate({ kind: 'message', chatId: 6, userId: 111, text: 'fetch a page' });
-    expect(t.buttons).toEqual([]);
+    expect(t.buttons.flatMap((b) => b.buttons.map((x) => x.data))).not.toContain('approve');
     const all = [...t.messages.map((m) => m.text), ...t.edits.map((e) => e.text)].join(' | ');
     expect(all).toContain('fetched');
   });
@@ -172,8 +173,22 @@ describe('TelegramFrontend security + messaging', () => {
     expect(t.buttons.length).toBe(1);
     await fe.handleUpdate({ kind: 'callback', chatId: 10, userId: 111, data: 'approve', callbackId: 'cb10', messageId: t.buttons[0]!.messageId });
     await p;
-    expect(t.buttons.length).toBe(1);
+    expect(t.buttons.filter((b) => b.buttons.some((button) => button.data === 'approve')).length).toBe(1);
     expect(existsSync(join(dir, 'made.txt'))).toBe(false);
+  });
+
+  it('reports Telegram status and handles post-turn action buttons', async () => {
+    const t = new MockTransport();
+    const fe = buildFrontend(t, [111], [{ text: ['done'] }], dir);
+    await fe.handleUpdate({ kind: 'message', chatId: 12, userId: 111, text: 'hi' });
+    const actionRow = t.buttons.at(-1)!;
+    expect(actionRow.text).toMatch(/Done ·/);
+
+    await fe.handleUpdate({ kind: 'callback', chatId: 12, userId: 111, data: 'act:status', callbackId: 'cb-status', messageId: actionRow.messageId });
+    expect(t.messages.at(-1)?.text).toMatch(/provider: scripted/);
+
+    await fe.handleUpdate({ kind: 'callback', chatId: 12, userId: 111, data: 'act:changes', callbackId: 'cb-changes', messageId: actionRow.messageId });
+    expect(t.messages.at(-1)?.text).toMatch(/No changed files|Changed files/);
   });
 
   it('denies tool use when the user taps deny', async () => {

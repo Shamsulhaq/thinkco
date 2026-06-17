@@ -8,6 +8,23 @@ export function isCompletionSummaryNotice(message: string): boolean {
   return COMPLETION_SUMMARY_RE.test(message.trim());
 }
 
+export interface TurnSummary {
+  elapsedMs: number;
+  elapsed: string;
+  contextUsed: number;
+  contextLimit: number;
+  contextPercent: number;
+  provider: string;
+  model: string;
+  toolCalls: number;
+  toolNames: string[];
+  approvals: number;
+  fileChanges: string[];
+  inputTokens: number;
+  outputTokens: number;
+  text: string;
+}
+
 export interface AgentSink {
   /** Streamed assistant text delta. */
   text(delta: string): void | Promise<void>;
@@ -23,6 +40,8 @@ export interface AgentSink {
   notice(message: string): void | Promise<void>;
   /** Error notice. */
   error(message: string): void | Promise<void>;
+  /** Structured metadata for the completed turn. */
+  turnSummary?(summary: TurnSummary): void | Promise<void>;
 }
 
 /** A sink that records everything — useful for tests and headless JSON mode. */
@@ -33,6 +52,7 @@ export class RecordingSink implements AgentSink {
   usages: Usage[] = [];
   notices: string[] = [];
   errors: string[] = [];
+  turnSummaries: TurnSummary[] = [];
 
   text(delta: string): void {
     this.texts.push(delta);
@@ -51,6 +71,9 @@ export class RecordingSink implements AgentSink {
   }
   error(message: string): void {
     this.errors.push(message);
+  }
+  turnSummary(summary: TurnSummary): void {
+    this.turnSummaries.push(summary);
   }
 
   get fullText(): string {

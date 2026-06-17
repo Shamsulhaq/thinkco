@@ -28,6 +28,19 @@ export interface PluginActivationResult {
   restartRequired: string[];
 }
 
+export interface PluginDiagnostic {
+  name: string;
+  installed: boolean;
+  enabled: boolean;
+  manifestValid: boolean;
+  commands: string[];
+  skills: string[];
+  hooks: string[];
+  mcpServers: string[];
+  restartRequired: string[];
+  error?: string;
+}
+
 export interface GitHubTreeSource {
   repoUrl: string;
   ref: string;
@@ -95,6 +108,53 @@ export class PluginManager {
 
   isEnabled(name: string): boolean {
     return this.readState().enabled.includes(name);
+  }
+
+  diagnose(name: string): PluginDiagnostic {
+    const installed = this.list().includes(name);
+    const enabled = this.isEnabled(name);
+    if (!installed) {
+      return {
+        name,
+        installed: false,
+        enabled,
+        manifestValid: false,
+        commands: [],
+        skills: [],
+        hooks: [],
+        mcpServers: [],
+        restartRequired: [],
+        error: `Plugin "${name}" is not installed.`,
+      };
+    }
+    try {
+      const parsed = parseManifest(this.dirFor(name));
+      const summary = applyPlugin(parsed, {});
+      return {
+        name,
+        installed: true,
+        enabled,
+        manifestValid: true,
+        commands: summary.commands,
+        skills: summary.skills,
+        hooks: summary.hooks,
+        mcpServers: summary.mcpServers,
+        restartRequired: summary.mcpServers.length ? ['mcpServers'] : [],
+      };
+    } catch (err) {
+      return {
+        name,
+        installed: true,
+        enabled,
+        manifestValid: false,
+        commands: [],
+        skills: [],
+        hooks: [],
+        mcpServers: [],
+        restartRequired: [],
+        error: (err as Error).message,
+      };
+    }
   }
 
   dirFor(name: string): string {

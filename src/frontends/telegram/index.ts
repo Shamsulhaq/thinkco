@@ -379,6 +379,8 @@ export class TelegramFrontend implements Frontend {
           const opts = this.selectOptions.get(update.chatId) ?? [];
           resolver(opts[idx] ?? null);
         }
+      } else if (data.startsWith('act:')) {
+        await this.handleAction(update.chatId, update.userId, data.slice(4));
       }
       if (update.callbackId) await this.transport.answerCallback(update.callbackId);
       return;
@@ -388,6 +390,10 @@ export class TelegramFrontend implements Frontend {
     if (!text) return;
 
     const state = this.getChat(update.chatId, update.userId);
+    if (text === '/status') {
+      await this.transport.sendMessage(update.chatId, state.runtime.statusSummary({ busy: state.busy, queueLength: state.queue.length }));
+      return;
+    }
     state.queue.push(text);
     if (state.busy) {
       await this.transport.sendMessage(update.chatId, `⏳ Queued (#${state.queue.length}) — I'll get to it next.`);
@@ -408,6 +414,7 @@ export class TelegramFrontend implements Frontend {
           await sink.start();
           await state.runtime.handleInput(text, sink);
           await sink.finalize();
+          await this.sendPostTurnActions(state, chatId);
         } catch (err) {
           await sink.error(`Error: ${(err as Error).message ?? String(err)}`);
           await sink.finalize();
@@ -418,6 +425,51 @@ export class TelegramFrontend implements Frontend {
     } finally {
       state.busy = false;
     }
+  }
+
+  private async handleAction(chatId: number, userId: number, action: string): Promise<void> {
+    const state = this.getChat(chatId, userId);
+    if (action === 'status') {
+      await this.transport.sendMessage(chatId, state.runtime.statusSummary({ busy: state.busy, queueLength: state.queue.length }));
+      return;
+    }
+    if (action === 'changes') {
+      await this.transport.sendMessage(chatId, state.runtime.changesSummary());
+      return;
+    }
+    if (action === 'tests') state.queue.push('Run the project test suite and summarize failures only.');
+    else if (action === 'continue') state.queue.push('Continue from the previous result. Pick the next useful step and keep the response concise.');
+    else if (action === 'undo') {
+      await this.transport.sendButtons(chatId, 'Revert the last autoCommit snapshot?', [
+        { text: 'Undo', data: 'act:undo-confirm' },
+        { text: 'Cancel', data: 'act:undo-cancel' },
+      ]);
+      return;
+    } else if (action === 'undo-confirm') state.queue.push('/undo');
+    else if (action === 'undo-cancel') {
+      await this.transport.sendMessage(chatId, 'Undo cancelled.');
+      return;
+    } else return;
+
+    if (state.busy) {
+      await this.transport.sendMessage(chatId, `⏳ Queued (#${state.queue.length}) — I'll get to it next.`);
+      return;
+    }
+    await this.drain(state, chatId);
+  }
+
+  private async sendPostTurnActions(state: ChatState, chatId: number): Promise<void> {
+    const last = state.runtime.latestTurnSummary();
+    const label = last
+      ? `Done · ${last.elapsed} · ${last.contextPercent}% context · ${last.fileChanges.length} changed file(s)`
+      : 'Done.';
+    await this.transport.sendButtons(chatId, label, [
+      { text: 'Status', data: 'act:status' },
+      { text: 'Changes', data: 'act:changes' },
+      { text: 'Run tests', data: 'act:tests' },
+      { text: 'Continue', data: 'act:continue' },
+      { text: 'Undo', data: 'act:undo' },
+    ]);
   }
 
   async start(): Promise<void> {

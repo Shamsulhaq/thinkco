@@ -12,6 +12,9 @@ function providerCommand(host: CommandHost): SlashCommand {
     name: 'provider',
     description: 'List configured providers and switch between them',
     run: async (ctx) => {
+      if (ctx.args.trim() === 'status') {
+        return { handled: true, message: host.providerStatus() };
+      }
       // Direct switch: `/provider openai`
       if (ctx.args) {
         const id = ctx.args.trim();
@@ -95,12 +98,18 @@ function loginCommand(host: CommandHost): SlashCommand {
 function modelsCommand(host: CommandHost): SlashCommand {
   return {
     name: 'models',
-    description: 'Pick a model with ↑/↓ arrows',
-    run: async () => {
+    description: 'Pick a model with ↑/↓ arrows; /models refresh fetches live models again',
+    run: async (ctx) => {
       const before = host.state.model;
-      const result = await host.selectModelForProvider(host.state.provider, { prompt: true, saveScope: true });
+      const refresh = ctx.args.trim() === 'refresh';
+      const result = await host.selectModelForProvider(host.state.provider, {
+        prompt: true,
+        saveScope: true,
+        title: refresh ? `Refresh models for ${host.state.provider}` : undefined,
+      });
       if (result.cancelled || result.model === before) return { handled: true, message: `Model unchanged (${host.state.model}).` };
-      return { handled: true, message: `Model set to ${result.model}.` };
+      const source = result.usedFallback ? 'registry fallback' : `${result.liveCount} live model(s)`;
+      return { handled: true, message: `Model set to ${result.model}. Source: ${source}.` };
     },
   };
 }
