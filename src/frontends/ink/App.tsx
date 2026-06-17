@@ -303,7 +303,7 @@ export function App({ controller }: { controller: TuiController }): React.ReactE
       {/* Persistent input — modern bordered box with a context hint line. */}
       {!snap.approval && !snap.select && !snap.overlay && !snap.inputReq ? (
         <Box flexDirection="column" marginTop={1}>
-          <Box borderStyle="round" borderColor={snap.busy ? 'yellow' : 'cyan'} paddingX={1}>
+          <Box>
             <Text color={snap.busy ? 'yellow' : 'cyan'} bold>
               {snap.busy ? `${spinnerDot()} ` : '❯ '}
             </Text>

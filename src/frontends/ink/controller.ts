@@ -56,7 +56,15 @@ export function filterOverlay(o: TuiOverlay): OverlayItem[] {
   const list = o.data[o.activeTab] ?? [];
   const q = o.filter.trim().toLowerCase();
   if (!q) return list;
-  return list.filter((i) => i.label.toLowerCase().includes(q) || i.description.toLowerCase().includes(q));
+  const filtered = list.filter((i) => i.label.toLowerCase().includes(q) || i.description.toLowerCase().includes(q));
+  if (!filtered.length && o.title === 'Plugins' && o.tabs[o.activeTab] === 'Discover' && looksLikeInstallSource(o.filter.trim())) {
+    return [{ label: o.filter.trim(), description: 'Install from git URL or local path' }];
+  }
+  return filtered;
+}
+
+function looksLikeInstallSource(value: string): boolean {
+  return /^(https?:\/\/|git@|\.{0,2}\/|\/)/.test(value);
 }
 
 export class TuiController {
@@ -301,6 +309,9 @@ export class TuiController {
     if (!o) return;
     const item = filterOverlay(o)[o.index];
     if (item && this.overlayOnEnter) this.overlayOnEnter(o.activeTab, item);
+    else if (o.title === 'Plugins' && o.activeTab === 1 && o.filter.trim() && this.overlayOnEnter) {
+      this.overlayOnEnter(o.activeTab, { label: o.filter.trim(), description: 'install source' });
+    }
   }
 
   /** Open a tabbed overlay for /help or /plugin. Returns true if handled. */
@@ -323,7 +334,17 @@ export class TuiController {
           if (tab === 1 && this.onPluginInstall) {
             const msg = this.onPluginInstall(item.label);
             this.addItem('notice', msg);
-            this.closeOverlay();
+            const refreshed = this.pluginsProvider?.();
+            if (refreshed) {
+              this.openOverlay({
+                title: 'Plugins',
+                tabs: ['Installed', 'Discover'],
+                data: [refreshed.installed, refreshed.registry],
+                onEnter: this.overlayOnEnter,
+              });
+            } else {
+              this.closeOverlay();
+            }
           }
         },
       });

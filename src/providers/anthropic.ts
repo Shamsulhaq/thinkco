@@ -54,6 +54,21 @@ export function toAnthropicMessages(messages: Message[]): {
             content: block.content,
             is_error: block.isError ?? false,
           };
+        case 'image':
+          return {
+            type: 'image',
+            source:
+              block.source.type === 'base64'
+                ? {
+                    type: 'base64',
+                    media_type: block.source.mediaType,
+                    data: block.source.data,
+                  }
+                : {
+                    type: 'url',
+                    url: block.source.url,
+                  },
+          };
       }
     });
     out.push({ role, content });

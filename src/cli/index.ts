@@ -13,7 +13,7 @@ const HELP = `thinkco v${VERSION} — multi-provider agentic coding CLI
 USAGE
   thinkco [options]                 Start an interactive session (REPL)
   thinkco -p "<task>" [options]     Run a single task headless (non-interactive)
-  thinkco telegram <cmd>            Configure/start the Telegram bot (setup|set-token|add-user|status|start)
+  thinkco telegram <cmd>            Configure/start the Telegram bot (config|setup|set-token|add-user|status|start)
   thinkco schedule                  Run configured scheduled tasks in the foreground
 
 OPTIONS
@@ -115,7 +115,8 @@ export async function main(argv: string[]): Promise<number> {
 
   // First-run onboarding (interactive only): pick a global default model + trust folder.
   const { isFirstRun } = await import('../config/index.js');
-  if (isFirstRun() && process.stdin.isTTY && args.options.get('frontend') !== 'telegram') {
+  const wantsTelegram = args.options.get('frontend') === 'telegram' || args.positionals[0] === 'telegram';
+  if (isFirstRun() && process.stdin.isTTY && !wantsTelegram) {
     const { runOnboarding } = await import('./onboarding.js');
     await runOnboarding(config, providerRegistry);
   }
@@ -127,7 +128,7 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   // Remote frontend (Telegram).
-  if (args.options.get('frontend') === 'telegram' || args.positionals[0] === 'telegram') {
+  if (wantsTelegram) {
     const token = process.env.TELEGRAM_BOT_TOKEN ?? config.telegram.token;
     if (!token) {
       logger.error('No Telegram bot token. Set one with `thinkco telegram set-token <token>` or TELEGRAM_BOT_TOKEN.');

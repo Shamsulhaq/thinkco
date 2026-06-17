@@ -38,3 +38,16 @@ export class PermissionDeniedError extends ThinkcoError {
     this.name = 'PermissionDeniedError';
   }
 }
+
+export function errorWithCause(err: unknown): string {
+  const e = err as { message?: unknown; cause?: unknown; code?: unknown; hostname?: unknown };
+  const message = typeof e.message === 'string' ? e.message : String(err);
+  const cause = e.cause as { message?: unknown; code?: unknown; hostname?: unknown } | undefined;
+  if (!cause) return message;
+  const bits = [
+    typeof cause.code === 'string' ? cause.code : undefined,
+    typeof cause.hostname === 'string' ? cause.hostname : undefined,
+    typeof cause.message === 'string' ? cause.message : undefined,
+  ].filter(Boolean);
+  return bits.length ? `${message} (${bits.join(': ')})` : message;
+}

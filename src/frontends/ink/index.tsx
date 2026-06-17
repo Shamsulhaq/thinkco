@@ -6,13 +6,26 @@ import { ProviderRegistry } from '../../providers/registry.js';
 import { ToolRegistry } from '../../tools/registry.js';
 import { SessionStore } from '../../agent/session.js';
 import { AgentRuntime } from '../../agent/runtime.js';
-import { PluginManager, searchRegistry } from '../../plugins/index.js';
+import { PluginManager, isRegistryEntryInstallable, searchRegistry } from '../../plugins/index.js';
 import { join } from 'node:path';
 import type { AgentSink } from '../../agent/output.js';
 import type { Frontend } from '../types.js';
-import { TuiController } from './controller.js';
+import { TuiController, type OverlayItem } from './controller.js';
 import { App } from './App.js';
 import { logger } from '../../util/logger.js';
+
+export function pluginOverlayItems(pluginManager: PluginManager): { installed: OverlayItem[]; registry: OverlayItem[] } {
+  const installedNames = new Set(pluginManager.list());
+  const installed = pluginManager.list().map((n) => ({
+    label: n,
+    description: pluginManager.isEnabled(n) ? 'enabled' : 'disabled',
+  }));
+  const registry = searchRegistry('')
+    .filter((e) => isRegistryEntryInstallable(e))
+    .filter((e) => !installedNames.has(e.name))
+    .map((e) => ({ label: e.name, description: e.description }));
+  return { installed, registry };
+}
 
 export interface InkFrontendOptions {
   config: Config;
@@ -76,14 +89,7 @@ export class InkFrontend implements Frontend {
       'usage', 'trust', 'init', 'doctor', 'config', 'rename', 'exit', 'agent', 'goal', 'compose', 'agents', 'budget', 'undo', 'fallback',
     ]);
     const pluginManager = new PluginManager(join(opts.cwd ?? process.cwd(), '.thinkco', 'plugins'));
-    this.controller.pluginsProvider = () => {
-      const installed = pluginManager.list().map((n) => ({
-        label: n,
-        description: pluginManager.isEnabled(n) ? 'enabled' : 'disabled',
-      }));
-      const registry = searchRegistry('').map((e) => ({ label: e.name, description: e.description }));
-      return { installed, registry };
-    };
+    this.controller.pluginsProvider = () => pluginOverlayItems(pluginManager);
     this.controller.onPluginInstall = (name: string) => {
       try {
         return `Installed "${pluginManager.install(name)}". Restart thinkco to load it.`;

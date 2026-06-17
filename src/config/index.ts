@@ -27,6 +27,8 @@ export const ConfigSchema = z.object({
   modelRouting: z.record(z.string(), z.string()).default({}),
   /** Commands run by the compose `verify` phase (defaults to auto-detected npm build/test). */
   verify: z.array(z.string()).default([]),
+  /** Optional TUI color theme name. */
+  theme: z.string().optional(),
   /** Optional embeddings backend for semantic search (defaults: derive from the active provider). */
   embedding: z
     .object({ model: z.string().optional(), baseUrl: z.string().optional(), apiKey: z.string().optional() })

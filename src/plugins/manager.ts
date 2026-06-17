@@ -8,8 +8,10 @@ import {
   cpSync,
   rmSync,
   statSync,
+  mkdtempSync,
 } from 'node:fs';
 import { join, basename } from 'node:path';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { parseManifest } from './manifest.js';
 import { applyPlugin, type PluginSinks, type PluginSummary } from './loader.js';
@@ -17,6 +19,43 @@ import { resolveInstallSource } from './registry.js';
 
 interface PluginState {
   enabled: string[];
+}
+
+export interface PluginActivationResult {
+  name: string;
+  summary: PluginSummary;
+  loaded: boolean;
+  restartRequired: string[];
+}
+
+export interface GitHubTreeSource {
+  repoUrl: string;
+  ref: string;
+  subdir: string;
+  name: string;
+}
+
+export function parseGitHubTreeUrl(source: string): GitHubTreeSource | undefined {
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return undefined;
+  }
+  if (url.hostname !== 'github.com') return undefined;
+  const parts = url.pathname.split('/').filter(Boolean);
+  const treeIndex = parts.indexOf('tree');
+  if (parts.length < 5 || treeIndex !== 2) return undefined;
+  const [owner, repo] = parts;
+  const ref = parts[treeIndex + 1];
+  const subdirParts = parts.slice(treeIndex + 2);
+  if (!owner || !repo || !ref || !subdirParts.length) return undefined;
+  return {
+    repoUrl: `https://github.com/${owner}/${repo.replace(/\.git$/, '')}.git`,
+    ref,
+    subdir: subdirParts.join('/'),
+    name: subdirParts[subdirParts.length - 1]!,
+  };
 }
 
 export class PluginManager {
@@ -58,6 +97,10 @@ export class PluginManager {
     return this.readState().enabled.includes(name);
   }
 
+  dirFor(name: string): string {
+    return join(this.pluginsDir, name);
+  }
+
   enable(name: string): void {
     const state = this.readState();
     if (!state.enabled.includes(name)) state.enabled.push(name);
@@ -76,23 +119,86 @@ export class PluginManager {
     const resolved = resolveInstallSource(source);
     let name: string;
     if (/^(https?:\/\/|git@)/.test(resolved)) {
-      name = basename(resolved).replace(/\.git$/, '');
-      const dest = join(this.pluginsDir, name);
-      // Non-interactive clone: never prompt for credentials (which would hang a TUI), fail fast.
-      execFileSync('git', ['clone', '--depth', '1', resolved, dest], {
-        stdio: 'ignore',
-        timeout: 60_000,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo', GCM_INTERACTIVE: 'never' },
-      });
-    } else {
-      if (!existsSync(join(resolved, 'plugin.json'))) {
-        throw new Error(`No plugin.json found at ${resolved}`);
+      const tree = parseGitHubTreeUrl(resolved);
+      if (tree) {
+        const tmp = mkdtempSync(join(tmpdir(), 'thinkco-plugin-'));
+        try {
+          const repoDir = join(tmp, 'repo');
+          this.clone(tree.repoUrl, repoDir, tree.ref);
+          const sourceDir = join(repoDir, tree.subdir);
+          if (!existsSync(sourceDir)) {
+            throw new Error(`GitHub tree path not found after clone: ${tree.subdir}`);
+          }
+          name = this.installDirectory(sourceDir, opts);
+        } finally {
+          rmSync(tmp, { recursive: true, force: true });
+        }
+      } else {
+        name = basename(resolved).replace(/\.git$/, '');
+        const dest = join(this.pluginsDir, name);
+        if (existsSync(join(dest, 'plugin.json'))) {
+          if (opts.enable !== false) this.enable(name);
+          return name;
+        }
+        this.clone(resolved, dest);
+        if (!existsSync(join(dest, 'plugin.json'))) {
+          rmSync(dest, { recursive: true, force: true });
+          throw new Error(`No plugin.json found at cloned repository root. Use a GitHub /tree/<branch>/<path> URL for a plugin subdirectory, or pass a local path containing plugin.json.`);
+        }
       }
-      name = parseManifest(resolved).manifest.name;
-      cpSync(resolved, join(this.pluginsDir, name), { recursive: true });
+    } else {
+      name = this.installDirectory(resolved, opts);
+      return name;
     }
     if (opts.enable !== false) this.enable(name);
     return name;
+  }
+
+  private clone(source: string, dest: string, branch?: string): void {
+    const args = ['clone', '--depth', '1'];
+    if (branch) args.push('--branch', branch);
+    args.push(source, dest);
+    // Non-interactive clone: never prompt for credentials (which would hang a TUI), fail fast.
+    execFileSync('git', args, {
+      stdio: 'ignore',
+      timeout: 60_000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo', GCM_INTERACTIVE: 'never' },
+    });
+  }
+
+  private installDirectory(sourceDir: string, opts: { enable?: boolean }): string {
+    if (!existsSync(join(sourceDir, 'plugin.json'))) {
+      throw new Error(`No plugin.json found at ${sourceDir}`);
+    }
+    const name = parseManifest(sourceDir).manifest.name;
+    if (!existsSync(join(this.pluginsDir, name, 'plugin.json'))) {
+      cpSync(sourceDir, join(this.pluginsDir, name), { recursive: true });
+    }
+    if (opts.enable !== false) this.enable(name);
+    return name;
+  }
+
+  /** Enable and apply an installed plugin into live registries. MCP servers still require restart. */
+  activate(name: string, sinks: PluginSinks): PluginActivationResult {
+    this.enable(name);
+    const summary = applyPlugin(parseManifest(this.dirFor(name)), {
+      ...sinks,
+      // Runtime MCP startup is intentionally not attempted here. Existing MCP managers own
+      // child-process lifecycle, so new servers are picked up on the next launch.
+      addMcpServer: undefined,
+    });
+    return {
+      name,
+      summary,
+      loaded: true,
+      restartRequired: summary.mcpServers.length ? ['mcpServers'] : [],
+    };
+  }
+
+  /** Install, enable, and apply a plugin into live registries. */
+  installAndActivate(source: string, sinks: PluginSinks): PluginActivationResult {
+    const name = this.install(source);
+    return this.activate(name, sinks);
   }
 
   /** Remove an installed plugin. */

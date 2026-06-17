@@ -1,6 +1,6 @@
 /** CLI frontend: readline REPL over the headless AgentRuntime. */
 import { createInterface, type Interface } from 'node:readline';
-import type { AgentSink } from '../agent/output.js';
+import { isCompletionSummaryNotice, type AgentSink } from '../agent/output.js';
 import type { ToolCall, Usage } from '../types/index.js';
 import type { ToolExecution } from '../tools/types.js';
 import type { ApprovalHook } from '../agent/loop.js';
@@ -82,6 +82,11 @@ export class CliSink implements AgentSink {
 
   notice(message: string): void {
     this.stopSpinner();
+    if (isCompletionSummaryNotice(message)) {
+      this.md.flush();
+      this.write(`${c.gray('─'.repeat(48))}\n${c.gray(message)}\n`);
+      return;
+    }
     this.write(`${c.gray(message)}\n`);
   }
 

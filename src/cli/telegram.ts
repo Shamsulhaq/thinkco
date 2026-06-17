@@ -1,6 +1,7 @@
 /** `thinkco telegram` subcommand: configure the bot token and user allowlist from the CLI. */
 import { createInterface } from 'node:readline';
 import { logger } from '../util/logger.js';
+import { errorWithCause } from '../util/errors.js';
 import { saveGlobalConfig, type Config } from '../config/index.js';
 import type { TelegramBotInfo } from '../frontends/telegram/transport.js';
 
@@ -31,7 +32,7 @@ function parseIds(values: string[]): number[] {
 
 const USAGE = `thinkco telegram <command>
 
-  setup                     Interactive: enter bot token + allowed user IDs
+  setup|config|configure    Interactive: enter bot token + allowed user IDs
   set-token <token>         Save the bot token to the global config
   add-user <id> [<id>...]   Allowlist one or more numeric Telegram user IDs
   remove-user <id> [...]    Remove user IDs from the allowlist
@@ -48,6 +49,7 @@ export async function runTelegramCommand(
   config: Config,
   globalDir?: string,
   fetchImpl: typeof fetch = fetch,
+  promptImpl: (question: string) => Promise<string> = prompt,
 ): Promise<number> {
   const sub = positionals[1] ?? 'status';
   const rest = positionals.slice(2);
@@ -103,10 +105,12 @@ export async function runTelegramCommand(
       return 0;
     }
 
-    case 'setup': {
+    case 'setup':
+    case 'config':
+    case 'configure': {
       logger.info('Configure Telegram. Get a token from @BotFather and your numeric id from @userinfobot.');
-      const token = (await prompt('Bot token (blank = keep current): ')).trim();
-      const idsRaw = (await prompt('Allowed user IDs (comma/space separated): ')).trim();
+      const token = (await promptImpl('Bot token (blank = keep current): ')).trim();
+      const idsRaw = (await promptImpl('Allowed user IDs (comma/space separated): ')).trim();
       const ids = idsRaw ? parseIds([idsRaw]) : [];
       const allowlist = Array.from(new Set([...config.telegram.allowlist, ...ids]));
       saveGlobalConfig({ telegram: { ...(token ? { token } : {}), allowlist } }, globalDir);
@@ -132,8 +136,14 @@ export async function runTelegramCommand(
         logger.info('Send your bot a message after `thinkco telegram start` to use it.');
         return 0;
       } catch (err) {
-        logger.error(`✗ Could not connect: ${(err as Error).message}`);
-        logger.error('Check the token (from @BotFather) and your network.');
+        const detail = errorWithCause(err);
+        logger.error(`✗ Could not connect: ${detail}`);
+        if (/timeout|aborted|ENOTFOUND|EAI_AGAIN|fetch failed/i.test(detail)) {
+          logger.error('Network/DNS timeout reaching https://api.telegram.org. Check DNS, VPN/proxy/firewall, or whether Telegram is blocked on this network.');
+          logger.error('Try: curl --connect-timeout 5 https://api.telegram.org');
+        } else {
+          logger.error('Check the token (from @BotFather) and your network.');
+        }
         return 1;
       }
     }

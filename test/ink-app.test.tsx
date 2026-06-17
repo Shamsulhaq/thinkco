@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { App, sanitizeTypedInput } from '../src/frontends/ink/App.js';
+import { pluginOverlayItems } from '../src/frontends/ink/index.js';
 import { TuiController, filterOverlay } from '../src/frontends/ink/controller.js';
+import { PluginManager } from '../src/plugins/manager.js';
 
 function ctrl() {
   return new TuiController({ provider: 'ollama', model: 'qwen', mode: 'default', inTokens: 0, outTokens: 0 });
@@ -180,6 +185,60 @@ describe('TuiController tabbed overlay', () => {
     c.overlayEnter();
     expect(installed).toBe('ruby-lsp');
   });
+
+  it('Enter on a typed Discover source installs that git URL', () => {
+    const c = ctrl();
+    let installed = '';
+    c.onPluginInstall = (name) => {
+      installed = name;
+      return `installed ${name}`;
+    };
+    c.pluginsProvider = () => ({ installed: [], registry: [] });
+    c.tryOpenOverlay('/plugin');
+    c.overlayTab(1);
+    for (const ch of 'https://github.com/acme/plugin.git') c.overlayType(ch);
+    expect(filterOverlay(c.getSnapshot().overlay!)).toEqual([
+      { label: 'https://github.com/acme/plugin.git', description: 'Install from git URL or local path' },
+    ]);
+    c.overlayEnter();
+    expect(installed).toBe('https://github.com/acme/plugin.git');
+  });
+
+  it('Enter on a typed Discover local path installs that path', () => {
+    const c = ctrl();
+    let installed = '';
+    c.onPluginInstall = (name) => {
+      installed = name;
+      return `installed ${name}`;
+    };
+    c.pluginsProvider = () => ({ installed: [], registry: [] });
+    c.tryOpenOverlay('/plugin');
+    c.overlayTab(1);
+    for (const ch of './plugins/my-plugin') c.overlayType(ch);
+    expect(filterOverlay(c.getSnapshot().overlay!)[0]?.label).toBe('./plugins/my-plugin');
+    c.overlayEnter();
+    expect(installed).toBe('./plugins/my-plugin');
+  });
+
+  it('refreshes Installed after a Discover install', () => {
+    const c = ctrl();
+    let isInstalled = false;
+    c.onPluginInstall = () => {
+      isInstalled = true;
+      return 'installed ruby-lsp';
+    };
+    c.pluginsProvider = () => ({
+      installed: isInstalled ? [{ label: 'ruby-lsp', description: 'enabled' }] : [],
+      registry: isInstalled ? [] : [{ label: 'ruby-lsp', description: 'Ruby LSP' }],
+    });
+    c.tryOpenOverlay('/plugin');
+    c.overlayTab(1);
+    c.overlayEnter();
+    const o = c.getSnapshot().overlay!;
+    expect(o.activeTab).toBe(0);
+    expect(o.data[0]!.map((i) => i.label)).toEqual(['ruby-lsp']);
+    expect(o.data[1]).toEqual([]);
+  });
 });
 
 describe('Ink App overlay render', () => {
@@ -195,6 +254,25 @@ describe('Ink App overlay render', () => {
     expect(frame).toContain('Commands');
     expect(frame).toContain('/help');
     unmount();
+  });
+});
+
+describe('Ink plugin overlay data', () => {
+  it('shows installed plugins and omits them from Discover', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'thinkco-ink-plugins-'));
+    try {
+      const mgr = new PluginManager(dir);
+      mgr.scaffold('code-review');
+      mgr.enable('code-review');
+      const data = pluginOverlayItems(mgr);
+      expect(data.installed.map((i) => i.label)).toContain('code-review');
+      expect(data.registry.map((i) => i.label)).not.toContain('code-review');
+      expect(data.registry.map((i) => i.label)).not.toEqual(
+        expect.arrayContaining(['terraform-iac', 'release-notes', 'ruflo-core']),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

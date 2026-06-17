@@ -1,0 +1,33 @@
+{
+  "name": "thinkco-vscode",
+  "displayName": "thinkco",
+  "description": "Multi-provider agentic coding assistant (thinkco) inside VS Code.",
+  "version": "0.1.0",
+  "publisher": "thinkco",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["AI", "Programming Languages", "Other"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "thinkco.openChat", "title": "thinkco: Open Chat" }
+    ],
+    "configuration": {
+      "title": "thinkco",
+      "properties": {
+        "thinkco.provider": { "type": "string", "default": "anthropic", "description": "Default provider." },
+        "thinkco.model": { "type": "string", "default": "", "description": "Default model (blank = provider default)." }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "thinkco": "file:../.."
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.5"
+  }
+}

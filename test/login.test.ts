@@ -113,9 +113,22 @@ describe('/provider command', () => {
   const withKeys = { providers: { openai: { apiKey: 'k-openai' }, anthropic: { apiKey: 'k-anthropic' } } };
 
   it('switches to a configured provider by argument', async () => {
-    const rt = runtime({ approve: async () => true, select: async () => null, input: async () => null }, new ProviderRegistry(), withKeys);
+    const selections: string[] = [];
+    const rt = runtime(
+      {
+        approve: async () => true,
+        select: async (title) => {
+          selections.push(title);
+          return null;
+        },
+        input: async () => null,
+      },
+      new ProviderRegistry(),
+      withKeys,
+    );
     await rt.handleInput('/provider openai', new RecordingSink());
     expect(rt.state.provider).toBe('openai');
+    expect(selections.some((title) => /Select a model for openai/.test(title))).toBe(true);
   });
 
   it('refuses to switch to a provider with no key', async () => {
@@ -138,8 +151,8 @@ describe('/provider command', () => {
     let offered: string[] = [];
     const ui: RuntimeUI = {
       approve: async () => true,
-      select: async (_t, items) => {
-        offered = items;
+      select: async (title, items) => {
+        if (/Configured providers/.test(title)) offered = items;
         return items.find((l) => l.startsWith('anthropic')) ?? null;
       },
       input: async () => null,
@@ -164,5 +177,23 @@ describe('/usage tracking', () => {
     const sink = new RecordingSink();
     await rt.handleInput('/usage', sink);
     expect(sink.notices.join(' ')).toMatch(/Usage: [1-9]\d* turn/);
+  });
+
+  it('reports elapsed time and context window usage after an agent turn', async () => {
+    const rt = runtime({ approve: async () => true, select: async () => null });
+    const sink = new RecordingSink();
+    await rt.handleInput('hello there', sink);
+    expect(sink.notices.join('\n')).toMatch(/Worked for \d+(m \d{2}s|s) · Context window \d+% used \([^)]+ tokens\)/);
+  });
+});
+
+describe('/plugin command', () => {
+  it('installs and loads a bundled plugin command without restart', async () => {
+    const rt = runtime({ approve: async () => true, select: async () => null, input: async () => null });
+    const sink = new RecordingSink();
+    await rt.handleInput('/plugin install code-review', sink);
+    expect(sink.notices.join(' ')).toMatch(/Installed and loaded "code-review"/);
+    expect(rt.commandNames()).toContain('/review');
+    expect(rt.skillRegistry.list().map((s) => s.name)).toContain('code-review');
   });
 });

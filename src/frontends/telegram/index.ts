@@ -1,6 +1,6 @@
 /** Telegram frontend: operate thinkco remotely over chat. Remote = remote code execution.
  *  Built on the shared AgentRuntime so it inherits commands, skills, plugins, and permissions. */
-import type { AgentSink } from '../../agent/output.js';
+import { isCompletionSummaryNotice, type AgentSink } from '../../agent/output.js';
 import type { ToolCall, Usage } from '../../types/index.js';
 import type { ToolExecution } from '../../tools/types.js';
 import { ToolRegistry } from '../../tools/registry.js';
@@ -11,9 +11,10 @@ import { AgentRuntime } from '../../agent/runtime.js';
 import type { Config } from '../../config/index.js';
 import type { ApprovalPrompt } from '../../permissions/index.js';
 import type { Frontend } from '../types.js';
-import { join } from 'node:path';
-import type { TelegramTransport, TelegramUpdate } from './transport.js';
+import { isAbsolute, join, resolve } from 'node:path';
+import type { TelegramChatAction, TelegramTransport, TelegramUpdate } from './transport.js';
 import { redactSecrets } from './redact.js';
+import { errorWithCause } from '../../util/errors.js';
 
 export interface TelegramFrontendOptions {
   transport: TelegramTransport;
@@ -29,6 +30,8 @@ interface ChatState {
   runtime: AgentRuntime;
   busy: boolean;
   queue: string[];
+  sink?: TelegramSink;
+  createdFiles: Set<string>;
 }
 
 /** Human-friendly status line for a tool the agent is about to run. */
@@ -53,17 +56,82 @@ function activityFor(name: string): string {
   }
 }
 
+function chatActionFor(name: string): TelegramChatAction {
+  switch (name) {
+    case 'web_search':
+    case 'web_fetch':
+      return 'find_location';
+    case 'read':
+    case 'list':
+    case 'grep':
+    case 'glob':
+    case 'code':
+    case 'knowledge':
+    case 'write':
+    case 'edit':
+      return 'upload_document';
+    default:
+      return 'typing';
+  }
+}
+
+function splitShellWords(command: string): string[] {
+  const words: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | undefined;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]!;
+    if (quote) {
+      if (ch === quote) quote = undefined;
+      else current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current) {
+        words.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += ch;
+  }
+  if (current) words.push(current);
+  return words;
+}
+
+function removablePathsFromShell(command: unknown): string[] {
+  if (typeof command !== 'string') return [];
+  const words = splitShellWords(command.trim());
+  if (words[0] !== 'rm') return [];
+  const paths: string[] = [];
+  for (const word of words.slice(1)) {
+    if (word === '--') continue;
+    if (word.startsWith('-')) {
+      if (/[rR]/.test(word)) return [];
+      continue;
+    }
+    paths.push(word);
+  }
+  return paths;
+}
+
 /** A sink that buffers assistant output and edits a single Telegram message as it grows. */
 class TelegramSink implements AgentSink {
   private buffer = '';
   private messageId?: number;
   private lastFlush = 0;
   private lastText = '';
+  private lastAction = 0;
   private status = '💭 Thinking…';
 
   constructor(
     private readonly transport: TelegramTransport,
     private readonly chatId: number,
+    private readonly onToolResult?: (call: ToolCall, result: ToolExecution) => void,
   ) {}
 
   private async flush(force = false): Promise<void> {
@@ -86,17 +154,45 @@ class TelegramSink implements AgentSink {
     }
   }
 
+  private async chatAction(action: TelegramChatAction = 'typing', force = false): Promise<void> {
+    if (!this.transport.sendChatAction) return;
+    const now = Date.now();
+    if (!force && now - this.lastAction < 4000) return;
+    this.lastAction = now;
+    try {
+      await this.transport.sendChatAction(this.chatId, action);
+    } catch {
+      // Non-fatal: chat actions are purely presentational.
+    }
+  }
+
+  start(): Promise<void> {
+    return this.chatAction('typing', true);
+  }
+
+  /** Re-post the current status/output so it becomes the newest chat message. */
+  async bumpToLatest(): Promise<void> {
+    const body = redactSecrets(this.buffer).slice(-3500);
+    const text = (this.status ? (body ? `${this.status}\n\n${body}` : this.status) : body) || '…';
+    this.messageId = await this.transport.sendMessage(this.chatId, text);
+    this.lastText = text;
+    this.lastFlush = Date.now();
+  }
+
   async text(delta: string): Promise<void> {
     this.buffer += delta;
     if (this.status && this.status !== '✍️ Responding…') this.status = '✍️ Responding…';
+    await this.chatAction('typing');
     await this.flush();
   }
   async toolCall(call: ToolCall): Promise<void> {
     this.status = activityFor(call.name);
+    await this.chatAction(chatActionFor(call.name), true);
     await this.flush(true);
   }
   async toolResult(_call: ToolCall, result: ToolExecution): Promise<void> {
     if (result.isError) this.buffer += `\n⚠ ${result.output}\n`;
+    this.onToolResult?.(_call, result);
     this.status = '💭 Working…';
     await this.flush(true);
   }
@@ -104,11 +200,14 @@ class TelegramSink implements AgentSink {
     /* tracked by the runtime */
   }
   async notice(message: string): Promise<void> {
-    this.buffer += `\n${message}\n`;
+    if (isCompletionSummaryNotice(message)) this.buffer += `\n────────────\n${message}\n`;
+    else this.buffer += `\n${message}\n`;
+    await this.chatAction('typing');
     await this.flush(true);
   }
   async error(message: string): Promise<void> {
     this.buffer += `\n⚠ ${message}\n`;
+    await this.chatAction('typing');
     await this.flush(true);
   }
   finalize(): Promise<void> {
@@ -126,7 +225,7 @@ export class TelegramFrontend implements Frontend {
   private readonly sessions: SessionStore;
   private readonly chats = new Map<number, ChatState>();
   private mcp?: import('../../mcp/manager.js').McpManager;
-  private readonly pendingApprovals = new Map<number, (decision: boolean) => void>();
+  private readonly pendingApprovals = new Map<number, { resolve: (decision: boolean) => void; messageId?: number }>();
   private readonly pendingSelects = new Map<number, (value: string | null) => void>();
 
   constructor(private readonly opts: TelegramFrontendOptions) {
@@ -160,13 +259,60 @@ export class TelegramFrontend implements Frontend {
 
   /** Inline-button approval; resolves when the user taps Approve/Deny. */
   private promptApproval(chatId: number, prompt: ApprovalPrompt): Promise<boolean> {
+    const state = this.chats.get(chatId);
+    if (this.shouldAutoApprove(chatId, prompt, state)) return Promise.resolve(true);
     return new Promise<boolean>((resolve) => {
-      this.pendingApprovals.set(chatId, resolve);
-      void this.transport.sendButtons(chatId, redactSecrets(`Approve action?\n${prompt.summary}`), [
-        { text: '✅ Approve', data: 'approve' },
-        { text: '❌ Deny', data: 'deny' },
-      ]);
+      const pending: { resolve: (decision: boolean) => void; messageId?: number } = { resolve };
+      this.pendingApprovals.set(chatId, pending);
+      void this.transport
+        .sendButtons(chatId, redactSecrets(`Approve action?\n${prompt.summary}`), [
+          { text: '✅ Approve', data: 'approve' },
+          { text: '❌ Deny', data: 'deny' },
+        ])
+        .then((messageId) => {
+          pending.messageId = messageId;
+        });
     });
+  }
+
+  private shouldAutoApprove(chatId: number, prompt: ApprovalPrompt, state: ChatState | undefined): boolean {
+    const { call, assessment } = prompt;
+    if (assessment.secret || assessment.protected || assessment.destructive) return false;
+    if (assessment.risk === 'read' || assessment.risk === 'network') return true;
+    const createdFiles = state?.createdFiles;
+    if (!createdFiles?.size) return false;
+    if ((call.name === 'write' || call.name === 'edit') && typeof call.input.path === 'string') {
+      return createdFiles.has(this.resolveChatPath(call.input.path));
+    }
+    const removable = removablePathsFromShell(call.input.command);
+    return call.name === 'shell' && removable.length > 0 && removable.every((p) => createdFiles.has(this.resolveChatPath(p)));
+  }
+
+  private resolveChatPath(path: string): string {
+    const cwd = this.opts.cwd ?? process.cwd();
+    return isAbsolute(path) ? resolve(path) : resolve(cwd, path);
+  }
+
+  private trackCreatedFile(state: ChatState, call: ToolCall, result: ToolExecution): void {
+    if (result.isError || call.name !== 'write' || typeof call.input.path !== 'string') return;
+    if (/^Created\b/.test(result.output)) state.createdFiles.add(this.resolveChatPath(call.input.path));
+  }
+
+  private async dismissApprovalPrompt(chatId: number, decision: boolean, messageId?: number): Promise<void> {
+    if (!messageId) return;
+    if (this.transport.deleteMessage) {
+      try {
+        await this.transport.deleteMessage(chatId, messageId);
+        return;
+      } catch {
+        // Fall back to editing if Telegram refuses deletion.
+      }
+    }
+    try {
+      await this.transport.editMessage(chatId, messageId, decision ? 'Approved. Continuing…' : 'Denied.');
+    } catch {
+      // Non-fatal; the approval resolver must still continue.
+    }
   }
 
   /** Numbered-button selection (Telegram has no arrow nav). Caps to 8 options. */
@@ -204,7 +350,7 @@ export class TelegramFrontend implements Frontend {
           select: (title, options) => this.promptSelect(chatId, title, options),
         },
       });
-      state = { runtime, busy: false, queue: [] };
+      state = { runtime, busy: false, queue: [], createdFiles: new Set<string>() };
       this.chats.set(chatId, state);
     }
     return state;
@@ -217,10 +363,13 @@ export class TelegramFrontend implements Frontend {
     if (update.kind === 'callback') {
       const data = update.data ?? '';
       if (data === 'approve' || data === 'deny') {
-        const resolver = this.pendingApprovals.get(update.chatId);
-        if (resolver) {
+        const pending = this.pendingApprovals.get(update.chatId);
+        if (pending) {
           this.pendingApprovals.delete(update.chatId);
-          resolver(data === 'approve');
+          const decision = data === 'approve';
+          await this.dismissApprovalPrompt(update.chatId, decision, pending.messageId ?? update.messageId);
+          await this.chats.get(update.chatId)?.sink?.bumpToLatest();
+          pending.resolve(decision);
         }
       } else if (data.startsWith('sel')) {
         const resolver = this.pendingSelects.get(update.chatId);
@@ -253,13 +402,17 @@ export class TelegramFrontend implements Frontend {
     try {
       while (state.queue.length) {
         const text = state.queue.shift()!;
-        const sink = new TelegramSink(this.transport, chatId);
+        const sink = new TelegramSink(this.transport, chatId, (call, result) => this.trackCreatedFile(state, call, result));
+        state.sink = sink;
         try {
+          await sink.start();
           await state.runtime.handleInput(text, sink);
           await sink.finalize();
         } catch (err) {
           await sink.error(`Error: ${(err as Error).message ?? String(err)}`);
           await sink.finalize();
+        } finally {
+          if (state.sink === sink) state.sink = undefined;
         }
       }
     } finally {
@@ -282,8 +435,9 @@ export class TelegramFrontend implements Frontend {
       if (me) {
         logger.info(`Telegram connected as @${me.username ?? me.first_name ?? me.id} (${this.opts.allowlist.length} allowed user(s)). Listening…`);
       }
-    } catch {
-      // non-fatal; polling will surface auth errors
+    } catch (err) {
+      logger.warn(`Telegram getMe failed: ${errorWithCause(err)}`);
+      logger.warn('Polling will keep retrying; check the bot token, network, webhook state, or duplicate bot processes.');
     }
     await this.transport.start();
   }

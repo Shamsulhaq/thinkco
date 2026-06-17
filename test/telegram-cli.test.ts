@@ -51,6 +51,20 @@ describe('thinkco telegram command', () => {
     expect(existsSync(join(dir, 'config.json'))).toBe(false);
   });
 
+  it('config alias runs the interactive setup flow', async () => {
+    const answers = ['999:XYZ', '111, 222'];
+    const code = await runTelegramCommand(
+      ['telegram', 'config'],
+      load(),
+      dir,
+      fetch,
+      async () => answers.shift() ?? '',
+    );
+    expect(code).toBe(0);
+    expect(saved().telegram.token).toBe('999:XYZ');
+    expect(saved().telegram.allowlist).toEqual([111, 222]);
+  });
+
   it('unknown subcommand returns non-zero usage', async () => {
     expect(await runTelegramCommand(['telegram', 'frobnicate'], load(), dir)).toBe(1);
   });

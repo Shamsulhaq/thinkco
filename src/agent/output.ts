@@ -2,9 +2,17 @@
 import type { ToolCall, Usage } from '../types/index.js';
 import type { ToolExecution } from '../tools/types.js';
 
+const COMPLETION_SUMMARY_RE = /^Worked for \d+(?:m \d{2}s|s) · Context window \d+% used \([^)]+ tokens\)$/;
+
+export function isCompletionSummaryNotice(message: string): boolean {
+  return COMPLETION_SUMMARY_RE.test(message.trim());
+}
+
 export interface AgentSink {
   /** Streamed assistant text delta. */
   text(delta: string): void | Promise<void>;
+  /** Optional streamed model thinking/reasoning delta. */
+  thinking?(delta: string): void | Promise<void>;
   /** A tool call is about to run. */
   toolCall(call: ToolCall): void | Promise<void>;
   /** A tool call finished. */

@@ -45,6 +45,13 @@ export class HookRunner {
     return (this.hooks[event]?.length ?? 0) > 0;
   }
 
+  /** Merge additional hooks into this runner at runtime. */
+  addHooks(hooks: HookConfig): void {
+    for (const [event, commands] of Object.entries(hooks) as Array<[HookEvent, string[]]>) {
+      this.hooks[event] = [...(this.hooks[event] ?? []), ...commands];
+    }
+  }
+
   /** Run all commands for an event. For pre-tool-use, a non-zero exit blocks the tool. */
   run(event: HookEvent, env: Record<string, string> = {}): HookRunResult {
     const commands = this.hooks[event] ?? [];

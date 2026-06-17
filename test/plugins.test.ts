@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseManifest } from '../src/plugins/manifest.js';
 import { loadPlugin } from '../src/plugins/loader.js';
-import { PluginManager } from '../src/plugins/manager.js';
+import { parseGitHubTreeUrl, PluginManager } from '../src/plugins/manager.js';
 import type { SlashCommand } from '../src/agent/commands.js';
 import type { Skill } from '../src/skills/parse.js';
 
@@ -99,6 +99,15 @@ describe('PluginManager lifecycle', () => {
     expect(mgr.list()).toContain('shipped');
   });
 
+  it('treats installing an already installed local plugin as a no-op', () => {
+    const src = join(root, 'src-plugin-repeat');
+    makePlugin(src, 'repeat');
+    const mgr = new PluginManager(join(root, 'installed'));
+    expect(mgr.install(src)).toBe('repeat');
+    expect(mgr.install(src)).toBe('repeat');
+    expect(mgr.list().filter((n) => n === 'repeat')).toHaveLength(1);
+  });
+
   it('disable and remove work', () => {
     const src = join(root, 'src2');
     makePlugin(src, 'temp');
@@ -128,6 +137,7 @@ describe('plugin registry resolution', () => {
     const { resolveInstallSource } = await import('../src/plugins/registry.js');
     expect(resolveInstallSource('https://github.com/x/y')).toBe('https://github.com/x/y');
     expect(resolveInstallSource('./local/path')).toBe('./local/path');
+    expect(resolveInstallSource('/tmp/local/path')).toBe('/tmp/local/path');
   });
 
   it('throws a helpful error for an unknown name', async () => {
@@ -143,5 +153,35 @@ describe('plugin registry resolution', () => {
     mgr.enable('conventional-commits');
     const summaries = mgr.loadEnabled({});
     expect(summaries.find((s) => s.name === 'conventional-commits')?.skills).toContain('conventional-commits');
+  });
+
+  it('activates a local plugin into live command and skill sinks', () => {
+    const src = join(root, 'src-live');
+    makePlugin(src, 'live');
+    const mgr = new PluginManager(join(root, 'installed'));
+    const commands: SlashCommand[] = [];
+    const skills: Skill[] = [];
+    const result = mgr.installAndActivate(src, {
+      registerCommand: (c) => commands.push(c),
+      addSkill: (s) => skills.push(s),
+    });
+    expect(result.loaded).toBe(true);
+    expect(commands.map((c) => c.name)).toContain('review');
+    expect(skills.map((s) => s.name)).toContain('demo');
+  });
+});
+
+describe('GitHub tree plugin URLs', () => {
+  it('parses a repository subdirectory URL into clone source and subdir', () => {
+    expect(parseGitHubTreeUrl('https://github.com/msitarzewski/agency-agents/tree/main/project-management')).toEqual({
+      repoUrl: 'https://github.com/msitarzewski/agency-agents.git',
+      ref: 'main',
+      subdir: 'project-management',
+      name: 'project-management',
+    });
+  });
+
+  it('ignores normal clone URLs', () => {
+    expect(parseGitHubTreeUrl('https://github.com/msitarzewski/agency-agents.git')).toBeUndefined();
   });
 });

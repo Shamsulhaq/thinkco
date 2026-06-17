@@ -1,4 +1,6 @@
 /** Telegram transport abstraction so the frontend can be tested with a mock. */
+import { logger } from '../../util/logger.js';
+import { errorWithCause } from '../../util/errors.js';
 
 export interface InlineButton {
   text: string;
@@ -23,9 +25,13 @@ export interface TelegramBotInfo {
   first_name?: string;
 }
 
+export type TelegramChatAction = 'typing' | 'upload_document' | 'find_location';
+
 export interface TelegramTransport {
   sendMessage(chatId: number, text: string): Promise<number>;
   editMessage(chatId: number, messageId: number, text: string): Promise<void>;
+  deleteMessage?(chatId: number, messageId: number): Promise<void>;
+  sendChatAction?(chatId: number, action: TelegramChatAction): Promise<void>;
   sendButtons(chatId: number, text: string, buttons: InlineButton[]): Promise<number>;
   answerCallback(callbackId: string, text?: string): Promise<void>;
   /** Verify the token and return the bot's identity (Telegram getMe). Optional on mocks. */
@@ -75,6 +81,14 @@ export class HttpTelegramTransport implements TelegramTransport {
     await this.call('editMessageText', { chat_id: chatId, message_id: messageId, text });
   }
 
+  async deleteMessage(chatId: number, messageId: number): Promise<void> {
+    await this.call('deleteMessage', { chat_id: chatId, message_id: messageId });
+  }
+
+  async sendChatAction(chatId: number, action: TelegramChatAction): Promise<void> {
+    await this.call('sendChatAction', { chat_id: chatId, action });
+  }
+
   async sendButtons(chatId: number, text: string, buttons: InlineButton[]): Promise<number> {
     const r = await this.call('sendMessage', {
       chat_id: chatId,
@@ -108,7 +122,8 @@ export class HttpTelegramTransport implements TelegramTransport {
           Record<string, unknown>
         >;
         for (const u of updates) this.dispatch(u);
-      } catch {
+      } catch (err) {
+        logger.warn(`Telegram polling failed: ${errorWithCause(err)}`);
         await new Promise((r) => setTimeout(r, 1000));
       }
     }

@@ -78,4 +78,21 @@ describe('CliSink Claude-style formatting', () => {
     sink.finalize();
     expect(out.join('')).toContain('Heading');
   });
+
+  it('separates completion metadata from assistant text', () => {
+    const out: string[] = [];
+    const sink = new CliSink((s) => out.push(s));
+    sink.text('Done');
+    sink.notice('Worked for 51s · Context window 5% used (3.2k/60k tokens)');
+    const text = out.join('');
+    expect(text).toContain('Done');
+    expect(text).toContain('────────────────────────────────────────────────\nWorked for 51s · Context window 5% used (3.2k/60k tokens)');
+  });
+
+  it('does not add separators before ordinary notices', () => {
+    const out: string[] = [];
+    const sink = new CliSink((s) => out.push(s));
+    sink.notice('regular notice');
+    expect(out.join('')).toBe('regular notice\n');
+  });
 });

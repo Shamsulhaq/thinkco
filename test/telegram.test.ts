@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TelegramFrontend } from '../src/frontends/telegram/index.js';
 import { redactSecrets } from '../src/frontends/telegram/redact.js';
-import type { InlineButton, TelegramTransport, TelegramUpdate } from '../src/frontends/telegram/transport.js';
+import type { InlineButton, TelegramChatAction, TelegramTransport, TelegramUpdate } from '../src/frontends/telegram/transport.js';
 import { ProviderRegistry } from '../src/providers/registry.js';
 import { FakeProvider, type ScriptedTurn } from '../src/providers/fake.js';
 import { loadConfig } from '../src/config/index.js';
@@ -12,7 +12,9 @@ import { loadConfig } from '../src/config/index.js';
 class MockTransport implements TelegramTransport {
   messages: Array<{ chatId: number; text: string }> = [];
   edits: Array<{ chatId: number; messageId: number; text: string }> = [];
-  buttons: Array<{ chatId: number; text: string; buttons: InlineButton[] }> = [];
+  buttons: Array<{ chatId: number; messageId: number; text: string; buttons: InlineButton[] }> = [];
+  deletes: Array<{ chatId: number; messageId: number }> = [];
+  actions: Array<{ chatId: number; action: TelegramChatAction }> = [];
   answered: string[] = [];
   private nextId = 1;
   handler?: (u: TelegramUpdate) => void;
@@ -24,9 +26,16 @@ class MockTransport implements TelegramTransport {
   async editMessage(chatId: number, messageId: number, text: string): Promise<void> {
     this.edits.push({ chatId, messageId, text });
   }
+  async deleteMessage(chatId: number, messageId: number): Promise<void> {
+    this.deletes.push({ chatId, messageId });
+  }
+  async sendChatAction(chatId: number, action: TelegramChatAction): Promise<void> {
+    this.actions.push({ chatId, action });
+  }
   async sendButtons(chatId: number, text: string, buttons: InlineButton[]): Promise<number> {
-    this.buttons.push({ chatId, text, buttons });
-    return this.nextId++;
+    const messageId = this.nextId++;
+    this.buttons.push({ chatId, messageId, text, buttons });
+    return messageId;
   }
   async answerCallback(callbackId: string): Promise<void> {
     this.answered.push(callbackId);
@@ -46,10 +55,14 @@ function buildFrontend(transport: MockTransport, allowlist: number[], script: Sc
 }
 
 let dir: string;
+const realFetch = globalThis.fetch;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'thinkco-tg-'));
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+  globalThis.fetch = realFetch;
+});
 
 describe('redaction', () => {
   it('redacts API keys and tokens', () => {
@@ -74,6 +87,9 @@ describe('TelegramFrontend security + messaging', () => {
     const all = [...t.messages.map((m) => m.text), ...t.edits.map((e) => e.text)].join(' ');
     expect(all).toContain('[redacted-openai-key]');
     expect(all).not.toContain('sk-abcdefghijklmnopqrstuv');
+    const finalText = t.edits.at(-1)?.text ?? t.messages.at(-1)?.text ?? '';
+    expect(finalText).toMatch(/────────────\s+Worked for \d+(m \d{2}s|s) · Context window \d+% used \([^)]+ tokens\)/);
+    expect((finalText.match(/────────────/g) ?? []).length).toBe(1);
   });
 
   it('handles slash commands via the shared runtime (e.g. /help)', async () => {
@@ -103,11 +119,61 @@ describe('TelegramFrontend security + messaging', () => {
     expect(t.buttons[0]!.buttons.map((b) => b.data)).toEqual(['approve', 'deny']);
 
     // Approve via callback.
-    await fe.handleUpdate({ kind: 'callback', chatId: 5, userId: 111, data: 'approve', callbackId: 'cb1' });
+    await fe.handleUpdate({ kind: 'callback', chatId: 5, userId: 111, data: 'approve', callbackId: 'cb1', messageId: t.buttons[0]!.messageId });
     await p;
 
     expect(existsSync(join(dir, 'remote.txt'))).toBe(true);
     expect(t.answered).toContain('cb1');
+    expect(t.deletes).toContainEqual({ chatId: 5, messageId: t.buttons[0]!.messageId });
+    const bumped = t.messages.at(-1);
+    expect(bumped?.text).toContain('Editing files');
+    expect(t.edits.at(-1)?.messageId).toBeGreaterThan(t.buttons[0]!.messageId);
+  });
+
+  it('does not ask approval for web fetches', async () => {
+    globalThis.fetch = (async () =>
+      ({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/plain' },
+        text: async () => 'example page',
+      }) as unknown as Response) as unknown as typeof fetch;
+    const t = new MockTransport();
+    const fe = buildFrontend(
+      t,
+      [111],
+      [
+        { toolCalls: [{ id: 'wf1', name: 'web_fetch', input: { url: 'https://example.com' } }] },
+        { text: ['fetched'] },
+      ],
+      dir,
+    );
+    await fe.handleUpdate({ kind: 'message', chatId: 6, userId: 111, text: 'fetch a page' });
+    expect(t.buttons).toEqual([]);
+    const all = [...t.messages.map((m) => m.text), ...t.edits.map((e) => e.text)].join(' | ');
+    expect(all).toContain('fetched');
+  });
+
+  it('does not ask again for edits or simple deletes of files created in this Telegram session', async () => {
+    const t = new MockTransport();
+    const fe = buildFrontend(
+      t,
+      [111],
+      [
+        { toolCalls: [{ id: 'w1', name: 'write', input: { path: 'made.txt', content: 'x' } }] },
+        { toolCalls: [{ id: 'e1', name: 'edit', input: { path: 'made.txt', oldString: 'x', newString: 'y' } }] },
+        { toolCalls: [{ id: 's1', name: 'shell', input: { command: 'rm made.txt' } }] },
+        { text: ['done'] },
+      ],
+      dir,
+    );
+    const p = fe.handleUpdate({ kind: 'message', chatId: 10, userId: 111, text: 'create then clean up' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(t.buttons.length).toBe(1);
+    await fe.handleUpdate({ kind: 'callback', chatId: 10, userId: 111, data: 'approve', callbackId: 'cb10', messageId: t.buttons[0]!.messageId });
+    await p;
+    expect(t.buttons.length).toBe(1);
+    expect(existsSync(join(dir, 'made.txt'))).toBe(false);
   });
 
   it('denies tool use when the user taps deny', async () => {
@@ -123,9 +189,10 @@ describe('TelegramFrontend security + messaging', () => {
     );
     const p = fe.handleUpdate({ kind: 'message', chatId: 7, userId: 111, text: 'write a file' });
     await new Promise((r) => setTimeout(r, 20));
-    await fe.handleUpdate({ kind: 'callback', chatId: 7, userId: 111, data: 'deny', callbackId: 'cb2' });
+    await fe.handleUpdate({ kind: 'callback', chatId: 7, userId: 111, data: 'deny', callbackId: 'cb2', messageId: t.buttons[0]!.messageId });
     await p;
     expect(existsSync(join(dir, 'blocked.txt'))).toBe(false);
+    expect(t.deletes).toContainEqual({ chatId: 7, messageId: t.buttons[0]!.messageId });
   });
 
   it('shows a friendly activity indicator while a tool runs', async () => {
@@ -141,6 +208,20 @@ describe('TelegramFrontend security + messaging', () => {
     const all = [...t.messages.map((m) => m.text), ...t.edits.map((e) => e.text)].join(' | ');
     expect(all).toContain('Searching the code'); // activity verb for glob
     expect(all).toContain('found them'); // final answer
+    expect(t.actions).toContainEqual({ chatId: 8, action: 'upload_document' });
+  });
+
+  it('sends Telegram chat actions for thinking, searching, and responding', async () => {
+    const t = new MockTransport();
+    const fe = buildFrontend(
+      t,
+      [111],
+      [{ toolCalls: [{ id: 's1', name: 'web_search', input: { query: 'docs', limit: 1 } }] }, { text: ['done'] }],
+      dir,
+    );
+    await fe.handleUpdate({ kind: 'message', chatId: 11, userId: 111, text: 'search web' });
+    expect(t.actions).toContainEqual({ chatId: 11, action: 'find_location' });
+    expect(t.actions).toContainEqual({ chatId: 11, action: 'typing' });
   });
 
   it('queues messages while busy and replies one by one', async () => {
@@ -162,7 +243,7 @@ describe('TelegramFrontend security + messaging', () => {
     await fe.handleUpdate({ kind: 'message', chatId: 9, userId: 111, text: 'msg2' });
     expect(t.messages.some((m) => /Queued/.test(m.text))).toBe(true);
     // Approve msg1; the drain loop then processes msg2.
-    await fe.handleUpdate({ kind: 'callback', chatId: 9, userId: 111, data: 'approve', callbackId: 'cb' });
+    await fe.handleUpdate({ kind: 'callback', chatId: 9, userId: 111, data: 'approve', callbackId: 'cb', messageId: t.buttons[0]!.messageId });
     await p1;
     const all = [...t.messages.map((m) => m.text), ...t.edits.map((e) => e.text)].join(' | ');
     expect(all).toContain('first done');

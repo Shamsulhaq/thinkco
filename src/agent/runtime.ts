@@ -28,6 +28,23 @@ import { join, isAbsolute } from 'node:path';
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { bundledPluginsRoot } from '../plugins/paths.js';
+import { buildProviderCommands } from './commands/providers.js';
+import type { CommandHost } from './commands/host.js';
+import type { PluginSinks, PluginActivationResult } from '../plugins/index.js';
+
+const CONTEXT_WINDOW_TOKENS = 60_000;
+
+function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes > 0 ? `${minutes}m ${seconds.toString().padStart(2, '0')}s` : `${seconds}s`;
+}
+
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(tokens >= 10_000 ? 0 : 1)}k`;
+  return String(tokens);
+}
 
 /** UI hooks a frontend provides for prompts that need interaction. */
 export interface RuntimeUI {
@@ -93,6 +110,7 @@ export class AgentRuntime {
   private loopInstance: AgentLoop;
   private readonly hookRunner: HookRunner;
   private readonly cwd: string;
+  private readonly pluginManager: PluginManager;
   private skipPersistOnce = false;
 
   constructor(private readonly opts: AgentRuntimeOptions) {
@@ -122,8 +140,8 @@ export class AgentRuntime {
     }
 
     const pluginHooks: HookConfig = {};
-    const pluginManager = new PluginManager(join(this.cwd, '.thinkco', 'plugins'));
-    pluginManager.loadEnabled({
+    this.pluginManager = new PluginManager(join(this.cwd, '.thinkco', 'plugins'));
+    this.pluginManager.loadEnabled({
       registerCommand: (cmd) => this.commands.register(cmd),
       addSkill: (s) => {
         this.skills.add(s);
@@ -135,11 +153,8 @@ export class AgentRuntime {
     // Bundled default plugins (shipped with thinkco) + opt-in Claude Code plugins from config.
     this.loadClaudePlugins(opts.config);
 
-    this.registerPluginCommand(pluginManager);
+    this.registerPluginCommand();
     this.registerInfoCommands();
-    this.registerModelCommand();
-    this.registerLoginCommand();
-    this.registerProviderCommand();
     this.registerSubagentTool();
     this.registerAgentCommands();
     this.registerAgentsStatusCommand();
@@ -188,6 +203,9 @@ export class AgentRuntime {
         }
       },
     });
+    for (const cmd of buildProviderCommands(this.commandHost())) {
+      this.commands.register(cmd);
+    }
 
     const resumed = opts.resumeId
       ? opts.sessionStore.load(opts.resumeId)
@@ -218,6 +236,44 @@ export class AgentRuntime {
 
   commandNames(): string[] {
     return this.commands.list().map((cmd) => `/${cmd.name}`).sort();
+  }
+
+  private commandHost(): CommandHost {
+    return {
+      state: this.state,
+      config: this.opts.config,
+      usage: this.usage,
+      engine: this.engine,
+      skills: this.skills,
+      providerRegistry: this.opts.providerRegistry,
+      availableModels: this.opts.availableModels ?? [],
+      globalConfigDir: this.opts.globalConfigDir,
+      cwd: this.cwd,
+      ui: this.opts.ui,
+      setMode: (mode) => this.engine.setMode(mode),
+      getMode: () => this.engine.getMode(),
+      knownProviders: () => this.knownProviders(),
+      isProviderConfigured: (id) => this.isProviderConfigured(id),
+      configuredProviders: () => this.configuredProviders(),
+      switchProvider: (id) => this.switchProvider(id),
+      finishLogin: () => this.finishLogin(),
+      selectModelForProvider: (provider, opts) => this.selectModelForProvider(provider, opts),
+      setSkipPersistOnce: (v) => {
+        this.skipPersistOnce = v;
+      },
+      getAgent: () => this.agent,
+      setAgent: (name) => this.setAgent(name),
+      getGoal: () => this.goalCondition,
+      setGoal: (goal) => {
+        this.goalCondition = goal;
+      },
+      setComposeSpec: (spec) => {
+        this.composeSpec = spec;
+      },
+      subagents: this.subagents,
+      gitSnap: () => this.gitSnap(),
+      getMessages: () => this.loopInstance.messages,
+    };
   }
 
   private registerInfoCommands(): void {
@@ -267,7 +323,59 @@ export class AgentRuntime {
     });
   }
 
-  private registerPluginCommand(pluginManager: PluginManager): void {
+  private pluginSinks(): PluginSinks {
+    return {
+      registerCommand: (cmd) => {
+        this.commands.register(cmd);
+        this.refreshKnownCommands?.();
+      },
+      addSkill: (s) => {
+        this.skills.add(s);
+        registerSkillScripts([s], (t) => this.opts.tools.register(t));
+      },
+      addHooks: (h) => this.hookRunner.addHooks(h),
+    };
+  }
+
+  private pluginActivationMessage(result: PluginActivationResult, action = 'Installed and loaded'): string {
+    const parts = [
+      `${action} "${result.name}".`,
+      result.summary.commands.length ? `Commands: ${result.summary.commands.map((c) => `/${c}`).join(', ')}.` : '',
+      result.summary.skills.length ? `Skills: ${result.summary.skills.join(', ')}.` : '',
+      result.summary.hooks.length ? `Hooks: ${result.summary.hooks.join(', ')}.` : '',
+      result.restartRequired.includes('mcpServers')
+        ? `Restart required for MCP servers: ${result.summary.mcpServers.join(', ')}.`
+        : '',
+    ].filter(Boolean);
+    return parts.join(' ');
+  }
+
+  /** Optional frontend hook used when runtime command/plugin registrations change. */
+  refreshKnownCommands?: () => void;
+
+  installPlugin(source: string): string {
+    return this.pluginActivationMessage(this.pluginManager.installAndActivate(source, this.pluginSinks()));
+  }
+
+  enablePlugin(name: string): string {
+    return this.pluginActivationMessage(this.pluginManager.activate(name, this.pluginSinks()), 'Enabled and loaded');
+  }
+
+  disablePlugin(name: string): string {
+    this.pluginManager.disable(name);
+    return `Disabled "${name}". Already-loaded commands and skills remain available until restart.`;
+  }
+
+  removePlugin(name: string): string {
+    this.pluginManager.remove(name);
+    return `Removed "${name}". Restart clears any commands or skills already loaded from this plugin.`;
+  }
+
+  listPlugins(): Array<{ name: string; enabled: boolean }> {
+    return this.pluginManager.list().map((name) => ({ name, enabled: this.pluginManager.isEnabled(name) }));
+  }
+
+  private registerPluginCommand(): void {
     this.commands.register({
       name: 'plugin',
       description: 'Manage plugins: /plugin [search <q>|install <src>|enable <n>|disable <n>|remove <n>]',
@@ -285,28 +393,27 @@ export class AgentRuntime {
                 : 'No matching plugins in the registry.',
             };
           }
-          if (sub === 'install' && arg) return { handled: true, message: `Installed "${pluginManager.install(arg)}". Restart to load.` };
+          if (sub === 'install' && arg) {
+            return { handled: true, message: this.installPlugin(arg) };
+          }
           if (sub === 'enable' && arg) {
-            pluginManager.enable(arg);
-            return { handled: true, message: `Enabled "${arg}". Restart to load.` };
+            return { handled: true, message: this.enablePlugin(arg) };
           }
           if (sub === 'disable' && arg) {
-            pluginManager.disable(arg);
-            return { handled: true, message: `Disabled "${arg}".` };
+            return { handled: true, message: this.disablePlugin(arg) };
           }
           if (sub === 'remove' && arg) {
-            pluginManager.remove(arg);
-            return { handled: true, message: `Removed "${arg}".` };
+            return { handled: true, message: this.removePlugin(arg) };
           }
         } catch (err) {
           return { handled: true, message: `Plugin error: ${(err as Error).message}` };
         }
-        const installed = pluginManager.list();
+        const installed = this.pluginManager.list();
         return {
           handled: true,
           message:
             (installed.length
-              ? installed.map((n) => `- ${n}${pluginManager.isEnabled(n) ? ' [enabled]' : ''}`).join('\n')
+              ? installed.map((n) => `- ${n}${this.pluginManager.isEnabled(n) ? ' [enabled]' : ''}`).join('\n')
               : 'No plugins installed.') + '\nUse: /plugin install <git-url|path> · enable/disable/remove <name>',
         };
       },
@@ -482,163 +589,89 @@ export class AgentRuntime {
 
   private async switchProvider(id: string): Promise<string> {
     this.state.provider = id;
-    this.state.model = this.opts.providerRegistry.resolveModel(id, this.opts.config);
-    saveGlobalConfig({ defaultProvider: id }, this.opts.globalConfigDir);
+    const result = await this.selectModelForProvider(id, {
+      prompt: true,
+      saveScope: true,
+      title: `Select a model for ${id}`,
+    });
     this.loopInstance = this.buildLoop();
-    return `Switched to ${id} · ${this.state.model}.`;
-  }
-
-  private registerProviderCommand(): void {
-    this.commands.register({
-      name: 'provider',
-      description: 'List configured providers and switch between them',
-      run: async (ctx) => {
-        // Direct switch: `/provider openai`
-        if (ctx.args) {
-          const id = ctx.args.trim();
-          if (!this.opts.providerRegistry.has(id) && !this.opts.config.providers[id]) {
-            return { handled: true, message: `Unknown provider "${id}". Known: ${this.knownProviders().join(', ')}.` };
-          }
-          if (!this.isProviderConfigured(id)) {
-            return { handled: true, message: `Provider "${id}" has no API key configured. Run /login to add one.` };
-          }
-          return { handled: true, message: await this.switchProvider(id) };
-        }
-
-        const providers = this.configuredProviders();
-        const labels = providers.map((id) => `${id}${id === this.state.provider ? '  (current)' : ''}`);
-        const current = Math.max(0, providers.indexOf(this.state.provider));
-        const choice = await this.opts.ui.select('Configured providers (run /login to add more)', labels, current);
-        if (!choice) {
-          return { handled: true, message: `Configured providers:\n${labels.join('\n')}\n\nRun /login to add a provider.` };
-        }
-        const id = providers[labels.indexOf(choice)];
-        if (!id || id === this.state.provider) {
-          return { handled: true, message: `Staying on ${this.state.provider}.` };
-        }
-        return { handled: true, message: await this.switchProvider(id) };
-      },
-    });
-  }
-
-  private registerLoginCommand(): void {
-    this.commands.register({
-      name: 'login',
-      description: 'Add a provider API key, or a custom OpenAI-compatible provider',
-      run: async () => {
-        const ui = this.opts.ui;
-        if (!ui.input) {
-          return { handled: true, message: '/login is only available in an interactive terminal.' };
-        }
-        const { PROVIDER_PRESETS, CUSTOM_PRESET_LABEL } = await import('../providers/presets.js');
-        const labels = [...PROVIDER_PRESETS.map((p) => p.label), CUSTOM_PRESET_LABEL];
-        const choice = await ui.select('Choose a provider', labels, 0);
-        if (!choice) return { handled: true, message: 'Cancelled.' };
-
-        const cfg = this.opts.config;
-
-        // Custom OpenAI-compatible provider.
-        if (choice === CUSTOM_PRESET_LABEL) {
-          const name = (await ui.input('Provider id (e.g. fireworks, deepinfra):'))?.trim();
-          if (!name) return { handled: true, message: 'Cancelled.' };
-          const baseUrl = (await ui.input('Base URL (OpenAI-compatible, e.g. https://api.x.ai/v1):'))?.trim();
-          if (!baseUrl) return { handled: true, message: 'Cancelled.' };
-          const apiKey = (await ui.input(`API key for ${name}:`, { password: true }))?.trim();
-          cfg.providers[name] = { ...cfg.providers[name], baseUrl, ...(apiKey ? { apiKey } : {}) };
-          this.opts.providerRegistry.registerConfiguredProviders(cfg);
-          saveGlobalConfig({ providers: { [name]: { baseUrl, ...(apiKey ? { apiKey } : {}) } } }, this.opts.globalConfigDir);
-          this.state.provider = name;
-          return { handled: true, message: await this.finishLogin() };
-        }
-
-        const preset = PROVIDER_PRESETS.find((p) => p.label === choice)!;
-        let apiKey: string | undefined;
-        if (preset.needsKey) {
-          apiKey = (await ui.input(`API key for ${preset.label}:`, { password: true }))?.trim() || undefined;
-          if (!apiKey) return { handled: true, message: 'Cancelled (no key entered).' };
-        }
-        // Non-native presets (OpenRouter/Groq/Together/opencode) are OpenAI-compatible: store baseUrl.
-        const entry: Record<string, string> = {};
-        if (!preset.native && preset.baseUrl) entry.baseUrl = preset.baseUrl;
-        if (preset.id === 'ollama' || preset.id === 'lmstudio') {
-          if (preset.baseUrl) entry.baseUrl = preset.baseUrl;
-        }
-        if (apiKey) entry.apiKey = apiKey;
-        cfg.providers[preset.id] = { ...cfg.providers[preset.id], ...entry };
-        if (!preset.native) this.opts.providerRegistry.registerConfiguredProviders(cfg);
-        saveGlobalConfig({ providers: { [preset.id]: entry } }, this.opts.globalConfigDir);
-        this.state.provider = preset.id;
-        return { handled: true, message: await this.finishLogin() };
-      },
-    });
+    const warning = result.usedFallback ? ' Live models were unavailable; using the registry default.' : '';
+    return result.cancelled
+      ? `Switched to ${id} · ${this.state.model}.${warning}`
+      : `Switched to ${id} · ${result.model}.${warning}`;
   }
 
   /** After a successful login: test the connection by fetching models, let the user pick one, rebuild. */
   private async finishLogin(): Promise<string> {
-    let models: string[] = [];
-    try {
-      const { listModels } = await import('../providers/local.js');
-      models = await listModels(this.state.provider, this.opts.config);
-    } catch {
-      models = [];
-    }
-    this.state.model = this.opts.providerRegistry.resolveModel(this.state.provider, this.opts.config);
-    if (models.length && this.opts.ui.input) {
-      const current = Math.max(0, models.indexOf(this.state.model));
-      const picked = await this.opts.ui.select(`Select a model for ${this.state.provider}`, models.slice(0, 100), current);
-      if (picked) {
-        this.state.model = picked;
-        saveGlobalConfig({ defaultModel: picked }, this.opts.globalConfigDir);
-      }
-    }
+    const result = await this.selectModelForProvider(this.state.provider, {
+      prompt: true,
+      saveScope: true,
+      title: `Select a model for ${this.state.provider}`,
+    });
     this.loopInstance = this.buildLoop();
-    return models.length
-      ? `✓ Connected to ${this.state.provider} — ${models.length} model(s) available, using "${this.state.model}".`
+    return result.liveCount
+      ? `✓ Connected to ${this.state.provider} — ${result.liveCount} model(s) available, using "${this.state.model}".`
       : `⚠ Saved ${this.state.provider}, but could not fetch models (check the API key, base URL, or that the server is running). Use /models to retry.`;
   }
 
-  private registerModelCommand(): void {
-    this.commands.register({
-      name: 'models',
-      description: 'Pick a model with ↑/↓ arrows',
-      run: async () => {
-        let models = this.opts.availableModels ?? [];
-        try {
-          const { listModels } = await import('../providers/local.js');
-          const live = await listModels(this.state.provider, this.opts.config);
-          if (live.length) models = live;
-        } catch {
-          /* keep startup list */
-        }
-        if (!models.length) return { handled: true, message: `No models discoverable for "${this.state.provider}".` };
-        const current = Math.max(0, models.indexOf(this.state.model));
-        // Annotate each model with live price/context from models.dev (cached, best-effort).
-        let labels = models;
-        try {
-          const { loadPricing, priceLabel } = await import('../util/pricing.js');
-          const pricing = await loadPricing();
-          labels = models.map((m) => {
-            const info = priceLabel(pricing, m, this.state.provider);
-            return info ? `${m}  —  ${info}` : m;
-          });
-        } catch {
-          /* offline → plain model ids */
-        }
-        const pickedLabel = await this.opts.ui.select(`Select model (${this.state.provider})`, labels, current);
-        if (!pickedLabel) return { handled: true, message: `Model unchanged (${this.state.model}).` };
-        const picked = models[labels.indexOf(pickedLabel)] ?? pickedLabel;
-        if (picked === this.state.model) return { handled: true, message: `Model unchanged (${this.state.model}).` };
-        this.state.model = picked;
-        const scope = await this.opts.ui.select(
-          `Save "${picked}" as default for…`,
-          ['This project', 'Global (all projects)', 'This session only'],
-          0,
-        );
-        if (scope?.startsWith('Global')) saveGlobalConfig({ defaultProvider: this.state.provider, defaultModel: picked }, this.opts.globalConfigDir);
-        this.skipPersistOnce = scope === 'This session only';
-        return { handled: true, message: `Model set to ${picked}.` };
-      },
-    });
+  private async discoverModels(provider: string): Promise<{ models: string[]; liveCount: number; usedFallback: boolean }> {
+    let models: string[] = [];
+    try {
+      const { listModels } = await import('../providers/local.js');
+      models = await listModels(provider, this.opts.config);
+    } catch {
+      models = [];
+    }
+    const liveCount = models.length;
+    if (!models.length && provider === this.state.provider) models = this.opts.availableModels ?? [];
+    if (!models.length) models = [this.opts.providerRegistry.resolveModel(provider, this.opts.config)].filter(Boolean);
+    return { models, liveCount, usedFallback: liveCount === 0 };
+  }
+
+  private async modelLabels(provider: string, models: string[]): Promise<string[]> {
+    try {
+      const { loadPricing, priceLabel } = await import('../util/pricing.js');
+      const pricing = await loadPricing();
+      return models.map((m) => {
+        const info = priceLabel(pricing, m, provider);
+        return info ? `${m}  —  ${info}` : m;
+      });
+    } catch {
+      return models;
+    }
+  }
+
+  private async selectModelForProvider(
+    provider: string,
+    opts: { prompt?: boolean; saveScope?: boolean; title?: string } = {},
+  ): Promise<{ model: string; liveCount: number; usedFallback: boolean; cancelled: boolean }> {
+    const { models, liveCount, usedFallback } = await this.discoverModels(provider);
+    const fallback = this.opts.providerRegistry.resolveModel(provider, this.opts.config);
+    let picked = provider === this.state.provider ? this.state.model : fallback;
+    if (!picked) picked = models[0] ?? fallback;
+    let cancelled = false;
+    if (opts.prompt !== false && models.length > 0) {
+      const labels = await this.modelLabels(provider, models.slice(0, 100));
+      const modelWindow = models.slice(0, 100);
+      const current = Math.max(0, modelWindow.indexOf(picked));
+      const pickedLabel = await this.opts.ui.select(opts.title ?? `Select model (${provider})`, labels, current);
+      if (pickedLabel) picked = modelWindow[labels.indexOf(pickedLabel)] ?? pickedLabel;
+      else cancelled = true;
+    }
+    this.state.provider = provider;
+    this.state.model = picked;
+    if (opts.saveScope !== false) {
+      const scope = await this.opts.ui.select(
+        `Save "${picked}" as default for…`,
+        ['This project', 'Global (all projects)', 'This session only'],
+        0,
+      );
+      if (scope?.startsWith('Global')) {
+        saveGlobalConfig({ defaultProvider: provider, defaultModel: picked }, this.opts.globalConfigDir);
+      }
+      this.skipPersistOnce = scope === 'This session only';
+    }
+    return { model: picked, liveCount, usedFallback, cancelled };
   }
 
   /** Build the agent-profile system-prompt note for the active primary agent. */
@@ -864,7 +897,7 @@ export class AgentRuntime {
       system,
       cwd: this.cwd,
       approve: this.opts.approve ?? this.engine.toHook(),
-      contextBudget: 60_000,
+      contextBudget: CONTEXT_WINDOW_TOKENS,
       rethrowProviderErrors: this.opts.config.fallback.length > 0,
       beforeTool: this.hookRunner.beforeToolHook(),
       afterTool: this.hookRunner.afterToolHook(),
@@ -875,6 +908,7 @@ export class AgentRuntime {
   async handleInput(line: string, sink: AgentSink, signal?: AbortSignal): Promise<{ exit: boolean }> {
     const input = line.trim();
     if (!input) return { exit: false };
+    const startedAt = Date.now();
     const tracked = this.withUsageTracking(sink);
     const turnSignal = this.beginBudgetTurn(signal);
 
@@ -898,12 +932,14 @@ export class AgentRuntime {
       if (result.prompt) {
         await this.loopInstance.run(result.prompt, tracked, turnSignal);
         this.persist();
+        await sink.notice(this.completionSummary(startedAt));
       }
       if (this.composeSpec) {
         const spec = this.composeSpec;
         this.composeSpec = undefined;
         await this.runCompose(spec, tracked, turnSignal);
         this.persist();
+        await sink.notice(this.completionSummary(startedAt));
       }
       return { exit: false };
     }
@@ -956,7 +992,15 @@ export class AgentRuntime {
       this.engine.clearTransientAllow();
     }
     this.persist();
+    await sink.notice(this.completionSummary(startedAt));
     return { exit: false };
+  }
+
+  private completionSummary(startedAt: number): string {
+    const elapsed = Date.now() - startedAt;
+    const used = estimateMessagesTokens(this.loopInstance.messages);
+    const pct = Math.min(100, Math.round((used / CONTEXT_WINDOW_TOKENS) * 100));
+    return `Worked for ${formatDuration(elapsed)} · Context window ${pct}% used (${formatTokenCount(used)}/${formatTokenCount(CONTEXT_WINDOW_TOKENS)} tokens)`;
   }
 
   /**
