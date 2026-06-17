@@ -1,9 +1,10 @@
 /** Token budgeting + conversation compaction. */
 import type { Message, ProviderAdapter } from '../types/index.js';
+import { countTokens } from './tokenizer.js';
 
-/** Rough token estimate (~4 chars/token). Good enough for budgeting decisions. */
+/** Token estimate through the active tokenizer (heuristic by default). */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  return countTokens(text);
 }
 
 export function messageText(msg: Message): string {

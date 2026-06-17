@@ -67,6 +67,8 @@ export interface ToolResult {
 export interface Usage {
   inputTokens: number;
   outputTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
 }
 
 export type StopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | 'error';
@@ -74,6 +76,7 @@ export type StopReason = 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence
 /** Streaming events emitted by a ProviderAdapter.chat() call. */
 export type ProviderEvent =
   | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
   | { type: 'tool_call'; call: ToolCall }
   | { type: 'usage'; usage: Usage }
   | { type: 'stop'; reason: StopReason };
@@ -83,6 +86,7 @@ export interface ChatOptions {
   system?: string;
   maxTokens?: number;
   temperature?: number;
+  thinkingBudget?: number;
   signal?: AbortSignal;
 }
 
@@ -91,6 +95,8 @@ export interface ProviderCapabilities {
   tools: boolean;
   streaming: boolean;
   systemPrompt: boolean;
+  vision?: boolean;
+  thinking?: boolean;
 }
 
 export interface ProviderAdapter {

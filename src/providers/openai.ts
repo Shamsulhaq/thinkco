@@ -20,7 +20,7 @@ export interface OpenAIOptions {
 
 interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content?: string | null;
+  content?: string | Array<Record<string, unknown>> | null;
   tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
   tool_call_id?: string;
 }
@@ -77,11 +77,19 @@ export function toOpenAIMessages(messages: Message[]): OpenAIMessage[] {
         }
       }
     }
-    const text = msg.content
-      .filter((b) => b.type === 'text')
-      .map((b) => (b as { text: string }).text)
-      .join('');
-    if (text) out.push({ role: 'user', content: text });
+    const parts: Array<Record<string, unknown>> = [];
+    for (const block of msg.content) {
+      if (block.type === 'text') parts.push({ type: 'text', text: block.text });
+      if (block.type === 'image') {
+        const url =
+          block.source.type === 'base64'
+            ? `data:${block.source.mediaType};base64,${block.source.data}`
+            : block.source.url;
+        parts.push({ type: 'image_url', image_url: { url } });
+      }
+    }
+    if (parts.length === 1 && parts[0]?.type === 'text') out.push({ role: 'user', content: parts[0].text as string });
+    else if (parts.length) out.push({ role: 'user', content: parts });
   }
   return out;
 }
@@ -95,7 +103,7 @@ export function toOpenAITools(tools: ToolDef[]): unknown[] {
 
 export class OpenAIAdapter implements ProviderAdapter {
   readonly name = 'openai';
-  readonly capabilities: ProviderCapabilities = { tools: true, streaming: true, systemPrompt: true };
+  readonly capabilities: ProviderCapabilities = { tools: true, streaming: true, systemPrompt: true, vision: true };
 
   private readonly apiKey: string;
   private readonly baseUrl: string;

@@ -5,6 +5,8 @@ import { lookupPrice, type PricingData } from './pricing.js';
 export class UsageTracker {
   private inputTokens = 0;
   private outputTokens = 0;
+  private cacheCreationTokens = 0;
+  private cacheReadTokens = 0;
   private turns = 0;
   /** Dynamic pricing (from models.dev), set once loaded. */
   private pricing?: PricingData;
@@ -12,6 +14,8 @@ export class UsageTracker {
   add(usage: Usage): void {
     this.inputTokens += usage.inputTokens;
     this.outputTokens += usage.outputTokens;
+    this.cacheCreationTokens += usage.cacheCreationTokens ?? 0;
+    this.cacheReadTokens += usage.cacheReadTokens ?? 0;
     this.turns += 1;
   }
 
@@ -20,8 +24,14 @@ export class UsageTracker {
     this.pricing = pricing;
   }
 
-  totals(): { inputTokens: number; outputTokens: number; turns: number } {
-    return { inputTokens: this.inputTokens, outputTokens: this.outputTokens, turns: this.turns };
+  totals(): { inputTokens: number; outputTokens: number; cacheCreationTokens: number; cacheReadTokens: number; turns: number } {
+    return {
+      inputTokens: this.inputTokens,
+      outputTokens: this.outputTokens,
+      cacheCreationTokens: this.cacheCreationTokens,
+      cacheReadTokens: this.cacheReadTokens,
+      turns: this.turns,
+    };
   }
 
   /** Estimated USD cost from live pricing (per 1M tokens). 0 if the model price is unknown. */
@@ -35,6 +45,7 @@ export class UsageTracker {
   format(model: string, provider?: string): string {
     const cost = this.estimateCost(model, provider);
     const costStr = cost > 0 ? ` ~$${cost.toFixed(4)}` : '';
-    return `Usage: ${this.turns} turn(s), in ${this.inputTokens} / out ${this.outputTokens} tokens${costStr}`;
+    const cacheStr = this.cacheCreationTokens || this.cacheReadTokens ? `, cache: ${this.cacheReadTokens} read / ${this.cacheCreationTokens} written` : '';
+    return `Usage: ${this.turns} turn(s), in ${this.inputTokens} / out ${this.outputTokens} tokens${cacheStr}${costStr}`;
   }
 }

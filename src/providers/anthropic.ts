@@ -76,17 +76,18 @@ export function toAnthropicMessages(messages: Message[]): {
   return { system, messages: out };
 }
 
-export function toAnthropicTools(tools: ToolDef[]): unknown[] {
-  return tools.map((t) => ({
+export function toAnthropicTools(tools: ToolDef[], cacheLast = false): unknown[] {
+  return tools.map((t, i) => ({
     name: t.name,
     description: t.description,
     input_schema: t.inputSchema,
+    ...(cacheLast && i === tools.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}),
   }));
 }
 
 export class AnthropicAdapter implements ProviderAdapter {
   readonly name = 'anthropic';
-  readonly capabilities: ProviderCapabilities = { tools: true, streaming: true, systemPrompt: true };
+  readonly capabilities: ProviderCapabilities = { tools: true, streaming: true, systemPrompt: true, vision: true, thinking: true };
 
   private readonly apiKey: string;
   private readonly baseUrl: string;
@@ -107,13 +108,15 @@ export class AnthropicAdapter implements ProviderAdapter {
     opts: ChatOptions,
   ): AsyncIterable<ProviderEvent> {
     const { system, messages: amsgs } = toAnthropicMessages(messages);
+    const maxTokens = opts.maxTokens ?? 4096;
     const body = {
       model: opts.model,
-      max_tokens: opts.maxTokens ?? 4096,
-      temperature: opts.temperature,
-      system: opts.system ?? system,
+      max_tokens: opts.thinkingBudget ? Math.max(maxTokens, opts.thinkingBudget + 1024) : maxTokens,
+      temperature: opts.thinkingBudget ? undefined : opts.temperature,
+      thinking: opts.thinkingBudget ? { type: 'enabled', budget_tokens: opts.thinkingBudget } : undefined,
+      system: opts.system ?? system ? [{ type: 'text', text: opts.system ?? system, cache_control: { type: 'ephemeral' } }] : undefined,
       messages: amsgs,
-      tools: tools.length ? toAnthropicTools(tools) : undefined,
+      tools: tools.length ? toAnthropicTools(tools, true) : undefined,
       stream: true,
     };
 
@@ -145,6 +148,8 @@ export async function* parseAnthropicStream(
   const toolBlocks = new Map<number, { id: string; name: string; json: string }>();
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheCreationTokens = 0;
+  let cacheReadTokens = 0;
   let stopReason: StopReason = 'end_turn';
 
   for await (const data of iterateSse(body)) {
@@ -162,6 +167,10 @@ export async function* parseAnthropicStream(
         | Record<string, number>
         | undefined;
       if (usage) inputTokens = usage.input_tokens ?? 0;
+      if (usage) {
+        cacheCreationTokens = usage.cache_creation_input_tokens ?? 0;
+        cacheReadTokens = usage.cache_read_input_tokens ?? 0;
+      }
     } else if (type === 'content_block_start') {
       const index = evt.index as number;
       const block = evt.content_block as Record<string, unknown>;
@@ -173,6 +182,8 @@ export async function* parseAnthropicStream(
       const delta = evt.delta as Record<string, unknown>;
       if (delta?.type === 'text_delta') {
         yield { type: 'text', text: delta.text as string };
+      } else if (delta?.type === 'thinking_delta') {
+        yield { type: 'thinking', text: delta.thinking as string };
       } else if (delta?.type === 'input_json_delta') {
         const tb = toolBlocks.get(index);
         if (tb) tb.json += (delta.partial_json as string) ?? '';
@@ -197,7 +208,15 @@ export async function* parseAnthropicStream(
       const sr = delta?.stop_reason as string | undefined;
       if (sr) stopReason = mapAnthropicStop(sr);
     } else if (type === 'message_stop') {
-      yield { type: 'usage', usage: { inputTokens, outputTokens } };
+      yield {
+        type: 'usage',
+        usage: {
+          inputTokens,
+          outputTokens,
+          ...(cacheCreationTokens ? { cacheCreationTokens } : {}),
+          ...(cacheReadTokens ? { cacheReadTokens } : {}),
+        },
+      };
       yield { type: 'stop', reason: stopReason };
     }
   }

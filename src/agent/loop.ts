@@ -114,6 +114,9 @@ export class AgentLoop {
               textBuf += event.text;
               await sink.text(event.text);
               break;
+            case 'thinking':
+              await sink.thinking?.(event.text);
+              break;
             case 'tool_call':
               toolCalls.push(event.call);
               break;
@@ -155,9 +158,9 @@ export class AgentLoop {
         return; // end of turn
       }
 
-      // Execute tool calls and append results.
-      const resultBlocks: ContentBlock[] = [];
-      for (const call of toolCalls) {
+      // Execute tool calls and append results. Calls are independent within a model turn, so
+      // run them concurrently but keep the resulting tool message in original call order.
+      const resultBlocks = await Promise.all(toolCalls.map(async (call): Promise<ContentBlock> => {
         await sink.toolCall(call);
         const tool = this.opts.tools.get(call.name);
 
@@ -171,13 +174,12 @@ export class AgentLoop {
               isError: true,
             };
             await sink.toolResult(call, denied);
-            resultBlocks.push({
+            return {
               type: 'tool_result',
               toolUseId: call.id,
               content: denied.output,
               isError: true,
-            });
-            continue;
+            };
           }
         }
 
@@ -189,13 +191,12 @@ export class AgentLoop {
               isError: true,
             };
             await sink.toolResult(call, blocked);
-            resultBlocks.push({
+            return {
               type: 'tool_result',
               toolUseId: call.id,
               content: blocked.output,
               isError: true,
-            });
-            continue;
+            };
           }
         }
 
@@ -207,13 +208,13 @@ export class AgentLoop {
         executedTool = true;
         await sink.toolResult(call, result);
         if (this.opts.afterTool) await this.opts.afterTool(call, result.output, result.isError);
-        resultBlocks.push({
+        return {
           type: 'tool_result',
           toolUseId: call.id,
           content: result.output,
           isError: result.isError,
-        });
-      }
+        };
+      }));
 
       this.messages.push({ role: 'tool', content: resultBlocks });
     }
